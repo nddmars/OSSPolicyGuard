@@ -1,0 +1,28 @@
+# config.yaml
+nvd:
+  api_key: "<<you nvd key>>"  # Get from https://nvd.nist.gov/developers/request-an-api-key
+  rate_limit: 5  # requests per second
+  
+github:
+  token: "<<your Github>>"  # GitHub personal access token
+  timeout: 10  # seconds
+
+scoring:
+  weights:
+    activity: 30
+    trust: 20
+    security: 35
+    community: 15
+  thresholds:
+    critical: 90
+    high: 80
+    medium: 70
+    low: 60
+
+risk:
+  high_risk_countries: ["CN", "RU", "IR", "KP", "SY"]
+  critical_apps: ["payment", "auth", "database"]
+  maintainer_risk_multipliers:
+    corporate: 1.0
+    verified_individual: 1.2
+    anonymous: 1.5
