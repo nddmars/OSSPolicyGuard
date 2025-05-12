@@ -44,3 +44,5 @@ dimensions:
   - legal: 
       weight: 30%
       subfactors: [licenses, geo_risk]
+
+![Workflow Visualization](screenshots/workflow.svg)

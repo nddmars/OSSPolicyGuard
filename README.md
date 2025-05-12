@@ -3,7 +3,7 @@
 # OSSPolicyGuard 🛡️
 **Lightweight Open-Source Component Governance**
 
-![Workflow Visualization](screenshots/workflow.svg)
+
 
 ## Features
 - ✅ Policy-based automatic approval/rejection
@@ -16,7 +16,6 @@
    ```bash
    pip install -r requirements.txt
 
-![Sample Output](screenshots/output_sample.png)
 
 1. **Install**:
    ```bash
@@ -49,12 +48,19 @@
         results = workflow.evaluate_component(sample_project)
         display(results)
 
+        ![Sample Output](screenshots/ComponentAnalysis.jpg)
+
+
         # Cell 3: Visualize results
         visualizer.create_dashboard(results)
+
+         ![Sample Output](screenshots/Visualize Output Screenshot-1.jpg)
+         ![Sample Output](screenshots/Visualize Output Screenshot-2.jpg)
 
         # Cell 4: Interactive tools
         visualizer.interactive_selector()
 
 
-## 📸 Workflow
-![Approval Process](screenshots/workflow.png)
+        ![Sample Output](screenshots/Visualizewr Interactive Output-1.jpg)
+
+
