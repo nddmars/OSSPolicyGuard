@@ -2,7 +2,7 @@
 nvd:
   api_key: "<<you nvd key>>"  # Get from https://nvd.nist.gov/developers/request-an-api-key
   rate_limit: 5  # requests per second
-  
+
 github:
   token: "<<your Github>>"  # GitHub personal access token
   timeout: 10  # seconds
@@ -26,3 +26,19 @@ risk:
     corporate: 1.0
     verified_individual: 1.2
     anonymous: 1.5
+
+# OpenSSF Scorecard — fetches a 0-10 security posture score for GitHub repos.
+# Set enabled: false to skip this API call.
+scorecard:
+  enabled: true
+  timeout: 10  # seconds
+
+# Contributor geolocation — resolves maintainer locations to country codes and
+# applies geo-political risk weighting to the trust score.
+# Nominatim (OpenStreetMap) is used as a free fallback geocoder; set a
+# descriptive user_agent so OSM can contact you if needed.
+geocoding:
+  enabled: true
+  max_contributors: 10        # number of top contributors to analyse
+  nominatim_url: "https://nominatim.openstreetmap.org"
+  user_agent: "OSSPolicyGuard/1.0 (opensource-policy-guard)"

@@ -341,29 +341,33 @@ class TestCalculateActivityScore:
 # ---------------------------------------------------------------------------
 
 class TestCalculateTrustScore:
-    def test_high_forks_scores_100(self):
-        workflow = _make_workflow()
-        result = {'github_metrics': {'forks': 10000}}
-        assert workflow._calculate_trust_score(result) == 100
+    # Without contributor_locations the geo sub-score is neutral (50), so the
+    # blended result is: 0.6 * maturity + 0.4 * 50.
 
-    def test_medium_forks_scores_80(self):
+    def test_high_forks_no_geo_data(self):
+        # maturity=100, geo=50 → 0.6*100 + 0.4*50 = 80
         workflow = _make_workflow()
-        result = {'github_metrics': {'forks': 2000}}
-        assert workflow._calculate_trust_score(result) == 80
+        assert workflow._calculate_trust_score({'github_metrics': {'forks': 10000}}) == 80.0
 
-    def test_low_forks_scores_60(self):
+    def test_medium_forks_no_geo_data(self):
+        # maturity=80, geo=50 → 0.6*80 + 0.4*50 = 68
         workflow = _make_workflow()
-        result = {'github_metrics': {'forks': 500}}
-        assert workflow._calculate_trust_score(result) == 60
+        assert workflow._calculate_trust_score({'github_metrics': {'forks': 2000}}) == 68.0
 
-    def test_very_low_forks_scores_40(self):
+    def test_low_forks_no_geo_data(self):
+        # maturity=60, geo=50 → 0.6*60 + 0.4*50 = 56
         workflow = _make_workflow()
-        result = {'github_metrics': {'forks': 10}}
-        assert workflow._calculate_trust_score(result) == 40
+        assert workflow._calculate_trust_score({'github_metrics': {'forks': 500}}) == 56.0
+
+    def test_very_low_forks_no_geo_data(self):
+        # maturity=40, geo=50 → 0.6*40 + 0.4*50 = 44
+        workflow = _make_workflow()
+        assert workflow._calculate_trust_score({'github_metrics': {'forks': 10}}) == 44.0
 
     def test_no_github_metrics_returns_50(self):
+        # maturity=50 (no data), geo=50 (no data) → 50
         workflow = _make_workflow()
-        assert workflow._calculate_trust_score({}) == 50
+        assert workflow._calculate_trust_score({}) == 50.0
 
 
 # ---------------------------------------------------------------------------
@@ -495,3 +499,286 @@ class TestEvaluateComponentValidation:
         assert 'total_score' in result
         assert 'approval' in result
         assert 'risk_level' in result
+
+
+# ---------------------------------------------------------------------------
+# OSSScorer.get_scorecard tests
+# ---------------------------------------------------------------------------
+
+class TestGetScorecard:
+    @patch('oss_scorer.requests.get')
+    def test_success_parses_score_and_checks(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            'score': 7.5,
+            'date': '2024-06-01',
+            'checks': [
+                {'name': 'Code-Review', 'score': 10},
+                {'name': 'Branch-Protection', 'score': 5},
+            ]
+        }
+
+        scorer = _make_scorer()
+        result = scorer.get_scorecard("https://github.com/owner/repo")
+
+        assert result is not None
+        assert result['score'] == 7.5
+        assert result['date'] == '2024-06-01'
+        assert result['checks']['Code-Review'] == 10
+        assert result['checks']['Branch-Protection'] == 5
+
+    @patch('oss_scorer.requests.get')
+    def test_404_returns_none(self, mock_get):
+        mock_get.return_value.status_code = 404
+
+        scorer = _make_scorer()
+        assert scorer.get_scorecard("https://github.com/owner/repo") is None
+
+    @patch('oss_scorer.requests.get')
+    def test_network_error_returns_none(self, mock_get):
+        mock_get.side_effect = requests_exception()
+
+        scorer = _make_scorer()
+        assert scorer.get_scorecard("https://github.com/owner/repo") is None
+
+    def test_invalid_url_returns_none(self):
+        scorer = _make_scorer()
+        assert scorer.get_scorecard("not-a-url") is None
+
+
+# ---------------------------------------------------------------------------
+# Security score blending tests (with Scorecard)
+# ---------------------------------------------------------------------------
+
+class TestSecurityScoreBlending:
+    def test_no_cves_no_scorecard_is_100(self):
+        wf = _make_workflow()
+        assert wf._calculate_security_score({}) == 100.0
+
+    def test_scorecard_blended_at_40_percent(self):
+        wf = _make_workflow()
+        # CVE score = 100, scorecard score = 5.0 (→50 out of 100)
+        # expected = 0.6*100 + 0.4*50 = 60+20 = 80
+        result = wf._calculate_security_score({
+            'scorecard_data': {'score': 5.0, 'date': '', 'checks': {}}
+        })
+        assert result == 80.0
+
+    def test_perfect_scorecard_boosts_score(self):
+        wf = _make_workflow()
+        # 4 critical CVEs → CVE score = 80; perfect scorecard (10→100)
+        # expected = 0.6*80 + 0.4*100 = 48+40 = 88
+        result = wf._calculate_security_score({
+            'cve_data': {'critical': 4},
+            'scorecard_data': {'score': 10.0, 'date': '', 'checks': {}}
+        })
+        assert result == 88.0
+
+    def test_zero_scorecard_penalises(self):
+        wf = _make_workflow()
+        # No CVEs → CVE score=100; scorecard=0 → 0.6*100 + 0.4*0 = 60
+        result = wf._calculate_security_score({
+            'scorecard_data': {'score': 0.0, 'date': '', 'checks': {}}
+        })
+        assert result == 60.0
+
+
+# ---------------------------------------------------------------------------
+# OSSScorer._geocode_location tests
+# ---------------------------------------------------------------------------
+
+class TestGeocodeLocation:
+    def test_empty_string_returns_empty(self):
+        scorer = _make_scorer()
+        assert scorer._geocode_location('') == ''
+
+    def test_known_city_china(self):
+        scorer = _make_scorer()
+        assert scorer._geocode_location('Shanghai, China') == 'CN'
+
+    def test_known_city_russia(self):
+        scorer = _make_scorer()
+        assert scorer._geocode_location('Moscow') == 'RU'
+
+    def test_known_city_us(self):
+        scorer = _make_scorer()
+        assert scorer._geocode_location('San Francisco, CA') == 'US'
+
+    def test_known_country_germany(self):
+        scorer = _make_scorer()
+        assert scorer._geocode_location('Berlin, Germany') == 'DE'
+
+    def test_case_insensitive(self):
+        scorer = _make_scorer()
+        assert scorer._geocode_location('BEIJING') == 'CN'
+
+    @patch('oss_scorer.requests.get')
+    def test_unknown_location_calls_nominatim(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = [
+            {'address': {'country_code': 'fr'}}
+        ]
+        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': True, 'nominatim_url': 'https://nominatim.openstreetmap.org', 'user_agent': 'test/1.0', 'max_contributors': 10}}
+        scorer = _make_scorer(cfg)
+        # "Bordeaux" is not in our fast-path map
+        result = scorer._geocode_location('Bordeaux')
+        assert result == 'FR'
+
+    @patch('oss_scorer.requests.get')
+    def test_nominatim_network_error_returns_empty(self, mock_get):
+        mock_get.side_effect = requests_exception()
+        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': True, 'nominatim_url': 'https://nominatim.openstreetmap.org', 'user_agent': 'test/1.0', 'max_contributors': 10}}
+        scorer = _make_scorer(cfg)
+        result = scorer._geocode_location('Someplace Unknown')
+        assert result == ''
+
+    def test_geocoding_disabled_skips_nominatim(self):
+        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': False, 'max_contributors': 10}}
+        scorer = _make_scorer(cfg)
+        # A location not in the fast-path map should return '' without any HTTP call
+        result = scorer._geocode_location('Bordeaux')
+        assert result == ''
+
+
+# ---------------------------------------------------------------------------
+# OSSWorkflow._calculate_geo_risk_score tests
+# ---------------------------------------------------------------------------
+
+class TestCalculateGeoRiskScore:
+    def _contrib(self, login, contributions, country_code):
+        return {'login': login, 'contributions': contributions, 'country_code': country_code}
+
+    def test_empty_contributors_returns_neutral(self):
+        wf = _make_workflow()
+        assert wf._calculate_geo_risk_score([]) == 50.0
+
+    def test_all_safe_countries_scores_100(self):
+        wf = _make_workflow()
+        contributors = [
+            self._contrib('alice', 100, 'US'),
+            self._contrib('bob', 80, 'DE'),
+        ]
+        assert wf._calculate_geo_risk_score(contributors) == 100.0
+
+    def test_all_high_risk_scores_0(self):
+        wf = _make_workflow()
+        contributors = [
+            self._contrib('user1', 200, 'CN'),
+            self._contrib('user2', 100, 'RU'),
+        ]
+        assert wf._calculate_geo_risk_score(contributors) == 0.0
+
+    def test_mixed_risk_weighted_by_commits(self):
+        wf = _make_workflow()
+        # 25% commits from high-risk (CN), 75% from safe (US)
+        contributors = [
+            self._contrib('alice', 75, 'US'),
+            self._contrib('bob', 25, 'CN'),
+        ]
+        # penalty = 0.25 → score = 100 * (1 - 0.25) = 75
+        assert wf._calculate_geo_risk_score(contributors) == 75.0
+
+    def test_unknown_location_applies_partial_penalty(self):
+        wf = _make_workflow()
+        # 100% unknown → penalty = 0.2*1.0 = 0.2 → score = 80
+        contributors = [self._contrib('anon', 100, '')]
+        assert wf._calculate_geo_risk_score(contributors) == 80.0
+
+    def test_mixed_safe_and_unknown(self):
+        wf = _make_workflow()
+        # 50% US (safe), 50% unknown → penalty = 0.2*0.5 = 0.1 → score = 90
+        contributors = [
+            self._contrib('alice', 50, 'US'),
+            self._contrib('anon', 50, ''),
+        ]
+        assert wf._calculate_geo_risk_score(contributors) == 90.0
+
+
+# ---------------------------------------------------------------------------
+# Trust score blending tests (maturity + geo-risk)
+# ---------------------------------------------------------------------------
+
+class TestTrustScoreBlending:
+    def test_no_data_returns_neutral(self):
+        wf = _make_workflow()
+        # No github_metrics, no contributor_locations → 0.6*50 + 0.4*50 = 50
+        assert wf._calculate_trust_score({}) == 50.0
+
+    def test_high_forks_safe_contributors_scores_high(self):
+        wf = _make_workflow()
+        results = {
+            'github_metrics': {'forks': 10000},
+            'contributor_locations': [
+                {'login': 'a', 'contributions': 100, 'country_code': 'US'},
+            ]
+        }
+        # maturity=100, geo=100 → 0.6*100 + 0.4*100 = 100
+        assert wf._calculate_trust_score(results) == 100.0
+
+    def test_high_forks_high_risk_contributors_penalised(self):
+        wf = _make_workflow()
+        results = {
+            'github_metrics': {'forks': 10000},
+            'contributor_locations': [
+                {'login': 'a', 'contributions': 100, 'country_code': 'CN'},
+            ]
+        }
+        # maturity=100, geo=0 → 0.6*100 + 0.4*0 = 60
+        assert wf._calculate_trust_score(results) == 60.0
+
+    def test_no_contributors_uses_neutral_geo(self):
+        wf = _make_workflow()
+        results = {'github_metrics': {'forks': 6000}}
+        # maturity=100 (>5000), geo=50 (neutral) → 0.6*100 + 0.4*50 = 80
+        assert wf._calculate_trust_score(results) == 80.0
+
+
+# ---------------------------------------------------------------------------
+# get_contributor_locations tests
+# ---------------------------------------------------------------------------
+
+class TestGetContributorLocations:
+    @patch('oss_scorer.requests.get')
+    def test_returns_geocoded_contributors(self, mock_get):
+        contributors_resp = MagicMock()
+        contributors_resp.status_code = 200
+        contributors_resp.raise_for_status = MagicMock()
+        contributors_resp.json.return_value = [
+            {'login': 'alice', 'contributions': 100},
+            {'login': 'bob', 'contributions': 50},
+        ]
+
+        alice_resp = MagicMock()
+        alice_resp.status_code = 200
+        alice_resp.raise_for_status = MagicMock()
+        alice_resp.json.return_value = {'location': 'San Francisco, CA', 'company': 'Acme'}
+
+        bob_resp = MagicMock()
+        bob_resp.status_code = 200
+        bob_resp.raise_for_status = MagicMock()
+        bob_resp.json.return_value = {'location': 'Beijing, China', 'company': ''}
+
+        mock_get.side_effect = [contributors_resp, alice_resp, bob_resp]
+
+        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': True, 'max_contributors': 10, 'nominatim_url': 'https://nominatim.openstreetmap.org', 'user_agent': 'test/1.0'}}
+        scorer = _make_scorer(cfg)
+        results = scorer.get_contributor_locations('https://api.github.com/repos/x/y/contributors')
+
+        assert len(results) == 2
+        assert results[0]['login'] == 'alice'
+        assert results[0]['country_code'] == 'US'
+        assert results[1]['login'] == 'bob'
+        assert results[1]['country_code'] == 'CN'
+
+    @patch('oss_scorer.requests.get')
+    def test_network_error_returns_empty_list(self, mock_get):
+        mock_get.side_effect = requests_exception()
+        scorer = _make_scorer()
+        result = scorer.get_contributor_locations('https://api.github.com/repos/x/y/contributors')
+        assert result == []
+
+    def test_geocoding_disabled_returns_empty_list(self):
+        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': False, 'max_contributors': 10}}
+        scorer = _make_scorer(cfg)
+        result = scorer.get_contributor_locations('https://api.github.com/repos/x/y/contributors')
+        assert result == []

@@ -29,6 +29,69 @@ _FORKS_LOW_THRESHOLD = 100
 
 _VALID_CRITICALITY = {"Mission Critical", "Business Critical", "Non-Critical"}
 
+# Fast-path lookup: lowercase location token → ISO-3166-1 alpha-2 country code.
+# Covers the high-risk countries from config plus the most common contributor locations
+# so that Nominatim is only needed for rare/ambiguous strings.
+_LOCATION_COUNTRY_MAP: dict[str, str] = {
+    # ── High-risk nations ──────────────────────────────────────────────────
+    'china': 'CN', 'prc': 'CN', 'beijing': 'CN', 'shanghai': 'CN',
+    'shenzhen': 'CN', 'guangzhou': 'CN', 'hangzhou': 'CN', 'chengdu': 'CN',
+    'wuhan': 'CN', 'nanjing': 'CN', 'xian': 'CN', 'tianjin': 'CN',
+    '中国': 'CN', '北京': 'CN', '上海': 'CN', '深圳': 'CN',
+    'russia': 'RU', 'russian federation': 'RU', 'moscow': 'RU',
+    'saint petersburg': 'RU', 'st. petersburg': 'RU', 'novosibirsk': 'RU',
+    'iran': 'IR', 'tehran': 'IR', 'isfahan': 'IR', 'mashhad': 'IR',
+    'north korea': 'KP', 'pyongyang': 'KP', 'dprk': 'KP',
+    'syria': 'SY', 'damascus': 'SY', 'aleppo': 'SY',
+    # ── United States ──────────────────────────────────────────────────────
+    'united states': 'US', 'usa': 'US', 'u.s.': 'US', 'u.s.a.': 'US',
+    'new york': 'US', 'san francisco': 'US', 'seattle': 'US', 'boston': 'US',
+    'chicago': 'US', 'austin': 'US', 'los angeles': 'US', 'portland': 'US',
+    'mountain view': 'US', 'san jose': 'US', 'redmond': 'US', 'menlo park': 'US',
+    'palo alto': 'US', 'denver': 'US', 'atlanta': 'US', 'raleigh': 'US',
+    # ── United Kingdom ─────────────────────────────────────────────────────
+    'united kingdom': 'GB', 'uk': 'GB', 'england': 'GB', 'london': 'GB',
+    'manchester': 'GB', 'cambridge': 'GB', 'oxford': 'GB', 'edinburgh': 'GB',
+    'bristol': 'GB', 'glasgow': 'GB',
+    # ── Germany ────────────────────────────────────────────────────────────
+    'germany': 'DE', 'deutschland': 'DE', 'berlin': 'DE', 'munich': 'DE',
+    'münchen': 'DE', 'hamburg': 'DE', 'frankfurt': 'DE', 'cologne': 'DE',
+    # ── France ─────────────────────────────────────────────────────────────
+    'france': 'FR', 'paris': 'FR', 'lyon': 'FR', 'toulouse': 'FR',
+    # ── Canada ─────────────────────────────────────────────────────────────
+    'canada': 'CA', 'toronto': 'CA', 'vancouver': 'CA', 'montreal': 'CA',
+    'calgary': 'CA', 'ottawa': 'CA',
+    # ── Australia ──────────────────────────────────────────────────────────
+    'australia': 'AU', 'sydney': 'AU', 'melbourne': 'AU', 'brisbane': 'AU',
+    # ── India ──────────────────────────────────────────────────────────────
+    'india': 'IN', 'bangalore': 'IN', 'bengaluru': 'IN', 'mumbai': 'IN',
+    'hyderabad': 'IN', 'pune': 'IN', 'delhi': 'IN', 'new delhi': 'IN',
+    'chennai': 'IN', 'kolkata': 'IN',
+    # ── Netherlands / Nordics ──────────────────────────────────────────────
+    'netherlands': 'NL', 'amsterdam': 'NL', 'the netherlands': 'NL',
+    'sweden': 'SE', 'stockholm': 'SE', 'gothenburg': 'SE',
+    'norway': 'NO', 'oslo': 'NO',
+    'denmark': 'DK', 'copenhagen': 'DK',
+    'finland': 'FI', 'helsinki': 'FI',
+    # ── Other common ───────────────────────────────────────────────────────
+    'japan': 'JP', 'tokyo': 'JP', 'osaka': 'JP',
+    'south korea': 'KR', 'seoul': 'KR',
+    'switzerland': 'CH', 'zurich': 'CH', 'zürich': 'CH', 'bern': 'CH',
+    'austria': 'AT', 'vienna': 'AT', 'wien': 'AT',
+    'poland': 'PL', 'warsaw': 'PL', 'krakow': 'PL',
+    'spain': 'ES', 'madrid': 'ES', 'barcelona': 'ES',
+    'italy': 'IT', 'rome': 'IT', 'milan': 'IT',
+    'brazil': 'BR', 'são paulo': 'BR', 'sao paulo': 'BR', 'rio de janeiro': 'BR',
+    'israel': 'IL', 'tel aviv': 'IL',
+    'singapore': 'SG',
+    'taiwan': 'TW', 'taipei': 'TW',
+    'new zealand': 'NZ', 'auckland': 'NZ',
+    'ukraine': 'UA', 'kyiv': 'UA', 'kiev': 'UA',
+    'czechia': 'CZ', 'czech republic': 'CZ', 'prague': 'CZ',
+    'portugal': 'PT', 'lisbon': 'PT',
+    'belgium': 'BE', 'brussels': 'BE',
+}
+
 
 # Configuration Manager
 class OSSConfig:
@@ -245,6 +308,136 @@ class OSSScorer:
             logger.error("NVD API error for %s: %s", package_name, e)
             return {'total': 0, 'critical': 0, 'last_updated': datetime.now().isoformat()}
 
+    def get_scorecard(self, repo_url: str) -> dict | None:
+        """Fetch OpenSSF Scorecard security score (0-10) for a GitHub repo.
+
+        Returns a dict with 'score' (float 0-10), 'date', and 'checks' (name→score map),
+        or None if the repo is not indexed or the request fails.
+        """
+        try:
+            owner, repo = self._parse_github_owner_repo(repo_url)
+        except ValueError as exc:
+            logger.error("Invalid repo URL for scorecard lookup: %s", exc)
+            return None
+
+        try:
+            url = f"https://api.securityscorecards.dev/projects/github.com/{owner}/{repo}"
+            response = requests.get(
+                url,
+                timeout=self.config.get('scorecard', {}).get('timeout', 10)
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    'score': float(data.get('score', 0)),
+                    'date': data.get('date', ''),
+                    'checks': {
+                        c['name']: c.get('score', -1)
+                        for c in data.get('checks', [])
+                    }
+                }
+            if response.status_code == 404:
+                logger.info("Scorecard not available for %s/%s (not indexed)", owner, repo)
+            else:
+                logger.warning("Scorecard API returned %s for %s/%s", response.status_code, owner, repo)
+            return None
+        except requests.RequestException as e:
+            logger.error("Scorecard API error for %s: %s", repo_url, e)
+            return None
+
+    def _geocode_location(self, location_str: str) -> str:
+        """Convert a free-text location string to an ISO-3166-1 alpha-2 country code.
+
+        Uses a fast local lookup first, then falls back to the Nominatim geocoding
+        API (OpenStreetMap, free, no key required). Returns '' when unknown.
+        """
+        if not location_str:
+            return ''
+
+        loc_lower = location_str.lower().strip()
+
+        # Fast path: check every token/phrase in the lookup map
+        for pattern, code in _LOCATION_COUNTRY_MAP.items():
+            if pattern in loc_lower:
+                return code
+
+        # Slow path: call Nominatim
+        geo_cfg = self.config.get('geocoding', {})
+        if not geo_cfg.get('enabled', True):
+            return ''
+        nominatim_url = geo_cfg.get('nominatim_url', 'https://nominatim.openstreetmap.org')
+        user_agent = geo_cfg.get('user_agent', 'OSSPolicyGuard/1.0')
+        try:
+            resp = requests.get(
+                f"{nominatim_url}/search",
+                params={'q': location_str, 'format': 'json', 'limit': 1, 'addressdetails': 1},
+                headers={'User-Agent': user_agent},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                results = resp.json()
+                if results:
+                    return results[0].get('address', {}).get('country_code', '').upper()
+        except requests.RequestException:
+            pass  # geocoding is best-effort
+
+        return ''
+
+    def get_contributor_locations(self, contributors_url: str) -> list[dict]:
+        """Fetch top contributors and geocode their profile locations.
+
+        Returns a list of dicts with keys: login, contributions, location,
+        company, country_code.
+        """
+        geo_cfg = self.config.get('geocoding', {})
+        if not geo_cfg.get('enabled', True):
+            return []
+
+        top_n = geo_cfg.get('max_contributors', 10)
+
+        try:
+            headers = self._build_headers('github')
+            response = self._rate_limited_get(
+                f"{contributors_url}?per_page={top_n}",
+                headers=headers,
+                timeout=self.config['github']['timeout']
+            )
+            response.raise_for_status()
+            contributors_raw = response.json()
+        except requests.RequestException as e:
+            logger.error("Contributors API error: %s", e)
+            return []
+
+        results = []
+        for contrib in contributors_raw[:top_n]:
+            login = contrib.get('login', '')
+            commit_count = contrib.get('contributions', 0)
+            location = ''
+            company = ''
+
+            try:
+                user_resp = self._rate_limited_get(
+                    f"https://api.github.com/users/{login}",
+                    headers=headers,
+                    timeout=self.config['github']['timeout']
+                )
+                user_resp.raise_for_status()
+                user_data = user_resp.json()
+                location = user_data.get('location') or ''
+                company = (user_data.get('company') or '').lstrip('@')
+            except requests.RequestException as e:
+                logger.warning("Could not fetch profile for contributor %s: %s", login, e)
+
+            results.append({
+                'login': login,
+                'contributions': commit_count,
+                'location': location,
+                'company': company,
+                'country_code': self._geocode_location(location),
+            })
+
+        return results
+
 
 # Visualization and Interaction
 class OSSVisualizer:
@@ -349,12 +542,24 @@ class OSSWorkflow:
         if 'repo_url' in component_data:
             gh_metrics = self.scorer.get_github_metrics(component_data['repo_url'])
             if gh_metrics:
-                results.update({'github_metrics': gh_metrics})
+                results['github_metrics'] = gh_metrics
+
+            # OpenSSF Scorecard
+            scorecard = self.scorer.get_scorecard(component_data['repo_url'])
+            if scorecard:
+                results['scorecard_data'] = scorecard
+
+            # Contributor geolocation (requires contributors_url from github_metrics)
+            contributors_url = (results.get('github_metrics') or {}).get('contributors_url', '')
+            if contributors_url:
+                locations = self.scorer.get_contributor_locations(contributors_url)
+                if locations:
+                    results['contributor_locations'] = locations
 
         # CVE check
         if 'package_name' in component_data:
             cve_data = self.scorer.check_cves(component_data['package_name'])
-            results.update({'cve_data': cve_data})
+            results['cve_data'] = cve_data
 
         # Calculate scores
         scores = {
@@ -406,24 +611,87 @@ class OSSWorkflow:
         return 10
 
     def _calculate_security_score(self, results: dict) -> float:
-        """Calculate security score (0-100) based on CVEs and practices"""
-        base_score = 100
+        """Calculate security score (0-100) blending CVE history and OpenSSF Scorecard.
+
+        When a Scorecard is available it contributes 40% of the score (covering
+        security practices, CI hardening, code review, branch protection, etc.)
+        and the CVE deduction contributes the remaining 60%.  Without a Scorecard
+        the full score comes from CVE history alone.
+        """
+        cve_score = 100.0
         if 'cve_data' in results:
-            base_score -= results['cve_data']['critical'] * _CVE_CRITICAL_DEDUCTION
-        return max(0, min(100, base_score))
+            cve_score -= results['cve_data']['critical'] * _CVE_CRITICAL_DEDUCTION
+        cve_score = max(0.0, min(100.0, cve_score))
+
+        if 'scorecard_data' in results:
+            # Scorecard is 0-10; convert to 0-100
+            scorecard_score = min(100.0, results['scorecard_data']['score'] * 10)
+            return round(0.6 * cve_score + 0.4 * scorecard_score, 1)
+
+        return cve_score
 
     def _calculate_trust_score(self, results: dict) -> float:
-        """Calculate trustworthiness score (0-100) based on fork count as a community proxy."""
-        if 'github_metrics' not in results:
-            return 50  # unknown - neutral fallback
-        forks = results['github_metrics'].get('forks', 0)
+        """Calculate trustworthiness score (0-100).
+
+        Blends two sub-dimensions:
+        - Project maturity (60%) — based on fork count as a community proxy
+        - Geopolitical risk (40%) — based on geocoded contributor locations;
+          neutral (50) when location data is unavailable
+        """
+        # Maturity sub-score
+        forks = (results.get('github_metrics') or {}).get('forks', 0)
         if forks > _FORKS_HIGH_THRESHOLD:
-            return 100
-        if forks > _FORKS_MED_THRESHOLD:
-            return 80
-        if forks > _FORKS_LOW_THRESHOLD:
-            return 60
-        return 40
+            maturity = 100.0
+        elif forks > _FORKS_MED_THRESHOLD:
+            maturity = 80.0
+        elif forks > _FORKS_LOW_THRESHOLD:
+            maturity = 60.0
+        elif results.get('github_metrics'):
+            maturity = 40.0
+        else:
+            maturity = 50.0  # no data at all — neutral
+
+        # Geo-risk sub-score
+        if 'contributor_locations' in results:
+            geo = self._calculate_geo_risk_score(results['contributor_locations'])
+        else:
+            geo = 50.0  # unknown — neutral
+
+        return round(0.6 * maturity + 0.4 * geo, 1)
+
+    def _calculate_geo_risk_score(self, contributors: list[dict]) -> float:
+        """Score geopolitical risk from geocoded contributors (0=all high-risk, 100=all safe).
+
+        Weights each contributor by their commit count.  Contributors whose location
+        resolves to a high-risk country drive the score down sharply; unknown
+        locations apply a lighter 20% penalty to account for the ambiguity.
+        """
+        if not contributors:
+            return 50.0  # unknown — neutral
+
+        high_risk_countries = set(
+            self.config.get('risk', {}).get('high_risk_countries', [])
+        )
+
+        total_commits = sum(c.get('contributions', 0) for c in contributors)
+        if total_commits == 0:
+            return 50.0
+
+        high_risk_commits = 0
+        unknown_commits = 0
+        for c in contributors:
+            n = c.get('contributions', 0)
+            code = c.get('country_code', '')
+            if not code:
+                unknown_commits += n
+            elif code in high_risk_countries:
+                high_risk_commits += n
+
+        high_risk_frac = high_risk_commits / total_commits
+        unknown_frac = unknown_commits / total_commits
+        # Unknown contributors apply a light 20% penalty; confirmed high-risk is full weight
+        penalty = high_risk_frac + 0.2 * unknown_frac
+        return round(max(0.0, 100.0 * (1 - penalty)), 1)
 
     def _calculate_community_score(self, results: dict) -> float:
         """Calculate community/adoption score (0-100) based on star count."""
