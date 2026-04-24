@@ -4,7 +4,7 @@ import logging
 import yaml
 import pandas as pd
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 import matplotlib.pyplot as plt
 from ipywidgets import interact, Dropdown
@@ -19,13 +19,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Scoring constants
-_CVE_CRITICAL_DEDUCTION = 5
 _STARS_HIGH_THRESHOLD = 10_000
 _STARS_MED_THRESHOLD = 1_000
 _STARS_LOW_THRESHOLD = 100
 _FORKS_HIGH_THRESHOLD = 5_000
 _FORKS_MED_THRESHOLD = 1_000
 _FORKS_LOW_THRESHOLD = 100
+
+# EPSS exploit-probability deduction thresholds (points deducted per CVE)
+_EPSS_HIGH_THRESHOLD = 0.5     # ≥ 0.5 → actively weaponised
+_EPSS_MED_THRESHOLD = 0.1      # 0.1–0.5 → meaningful exploitation risk
+_DEDUCT_EPSS_HIGH = 15         # confirmed active exploit
+_DEDUCT_EPSS_MED = 8           # moderate exploitation risk
+_DEDUCT_EPSS_LOW = 2           # theoretical / low probability
+_DEDUCT_CVSS_CRITICAL = 10     # CRITICAL severity, no EPSS data
+_DEDUCT_CVSS_HIGH = 5          # HIGH severity, no EPSS data
+_DEDUCT_CVSS_MEDIUM = 2        # MEDIUM severity, no EPSS data
+
+# NVD CVE look-back window (days)
+_CVE_LOOKBACK_DAYS = 3 * 365
 
 _VALID_CRITICALITY = {"Mission Critical", "Business Critical", "Non-Critical"}
 
@@ -283,30 +295,128 @@ class OSSScorer:
             return None
 
     def check_cves(self, package_name: str, ecosystem: str = "npm") -> dict:
-        """Check NVD database for CVEs"""
-        try:
-            url = f"https://services.nvd.nist.gov/rest/json/cves/1.0?keyword={package_name}"
-            headers = self._build_headers('nvd')
+        """Query NVD v2 API for CVEs then enrich each one with an EPSS score.
 
+        Returns a dict with severity-band counts, EPSS-based counts, the
+        highest observed EPSS value, and the full list of parsed CVE objects.
+        All counts cover the past 3 years only.
+        """
+        _empty = {
+            'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0,
+            'epss_high': 0, 'max_epss': 0.0, 'cves': [],
+            'last_updated': datetime.now().isoformat()
+        }
+
+        try:
+            since = (datetime.utcnow() - timedelta(days=_CVE_LOOKBACK_DAYS)).strftime(
+                '%Y-%m-%dT00:00:00.000'
+            )
             response = self._rate_limited_get(
-                url,
-                headers=headers,
+                "https://services.nvd.nist.gov/rest/json/cves/2.0",
+                headers=self._build_headers('nvd'),
+                timeout=self.config['github']['timeout']
+            )
+            # NVD v2 requires params via the URL; rebuild with params
+            response = requests.get(
+                "https://services.nvd.nist.gov/rest/json/cves/2.0",
+                params={'keywordSearch': package_name, 'resultsPerPage': 50,
+                        'pubStartDate': since},
+                headers=self._build_headers('nvd'),
                 timeout=self.config['github']['timeout']
             )
 
-            if response.status_code == 200:
-                cves = response.json().get("result", {}).get("CVE_Items", [])
-                return {
-                    'total': len(cves),
-                    'critical': sum(1 for cve in cves if
-                                    cve.get('impact', {}).get('baseMetricV2', {}).get('severity') == 'HIGH'),
-                    'last_updated': datetime.now().isoformat()
-                }
-            logger.warning("NVD API returned status %s for package %s", response.status_code, package_name)
-            return {'total': 0, 'critical': 0, 'last_updated': datetime.now().isoformat()}
+            if response.status_code != 200:
+                logger.warning("NVD API returned %s for %s", response.status_code, package_name)
+                return _empty
+
+            parsed = []
+            for item in response.json().get('vulnerabilities', []):
+                cve_obj = item.get('cve', {})
+                cve_id = cve_obj.get('id', '')
+                metrics = cve_obj.get('metrics', {})
+
+                # Prefer CVSSv3.1 → v3.0 → v2 for severity
+                severity = 'UNKNOWN'
+                base_score = 0.0
+                for key in ('cvssMetricV31', 'cvssMetricV30'):
+                    bucket = metrics.get(key, [])
+                    if bucket:
+                        cvss = bucket[0].get('cvssData', {})
+                        severity = cvss.get('baseSeverity', 'UNKNOWN').upper()
+                        base_score = float(cvss.get('baseScore', 0))
+                        break
+                else:
+                    bucket = metrics.get('cvssMetricV2', [])
+                    if bucket:
+                        severity = bucket[0].get('baseSeverity', 'UNKNOWN').upper()
+                        base_score = float(bucket[0].get('cvssData', {}).get('baseScore', 0))
+
+                parsed.append({
+                    'id': cve_id,
+                    'severity': severity,
+                    'base_score': base_score,
+                    'epss': 0.0,
+                    'epss_percentile': 0.0,
+                })
+
         except requests.RequestException as e:
             logger.error("NVD API error for %s: %s", package_name, e)
-            return {'total': 0, 'critical': 0, 'last_updated': datetime.now().isoformat()}
+            return _empty
+
+        if not parsed:
+            return _empty
+
+        # Enrich with EPSS scores (batched, best-effort)
+        epss_map = self.get_epss_scores([c['id'] for c in parsed if c['id']])
+        for cve in parsed:
+            if cve['id'] in epss_map:
+                cve['epss'] = epss_map[cve['id']]['epss']
+                cve['epss_percentile'] = epss_map[cve['id']]['percentile']
+
+        return {
+            'total': len(parsed),
+            'critical': sum(1 for c in parsed if c['severity'] == 'CRITICAL'),
+            'high':     sum(1 for c in parsed if c['severity'] == 'HIGH'),
+            'medium':   sum(1 for c in parsed if c['severity'] == 'MEDIUM'),
+            'low':      sum(1 for c in parsed if c['severity'] == 'LOW'),
+            'epss_high': sum(1 for c in parsed if c['epss'] >= _EPSS_HIGH_THRESHOLD),
+            'max_epss':  round(max((c['epss'] for c in parsed), default=0.0), 4),
+            'cves':      parsed,
+            'last_updated': datetime.now().isoformat(),
+        }
+
+    def get_epss_scores(self, cve_ids: list[str]) -> dict[str, dict]:
+        """Fetch EPSS exploit-probability scores from FIRST.org for a list of CVE IDs.
+
+        Calls the free FIRST API (no key required) in batches of 30.
+        Returns {cve_id: {'epss': float, 'percentile': float}}.
+        """
+        if not cve_ids:
+            return {}
+
+        results: dict[str, dict] = {}
+        for i in range(0, len(cve_ids), 30):
+            batch = cve_ids[i:i + 30]
+            try:
+                resp = requests.get(
+                    "https://api.first.org/data/1.0/epss",
+                    params={'cve': ','.join(batch)},
+                    timeout=self.config.get('epss', {}).get('timeout', 10)
+                )
+                if resp.status_code == 200:
+                    for item in resp.json().get('data', []):
+                        cid = item.get('cve', '')
+                        if cid:
+                            results[cid] = {
+                                'epss': float(item.get('epss', 0)),
+                                'percentile': float(item.get('percentile', 0)),
+                            }
+                else:
+                    logger.warning("EPSS API returned %s for batch [%s...]", resp.status_code, batch[0])
+            except requests.RequestException as e:
+                logger.warning("EPSS API error for batch [%s...]: %s", batch[0], e)
+
+        return results
 
     def get_scorecard(self, repo_url: str) -> dict | None:
         """Fetch OpenSSF Scorecard security score (0-10) for a GitHub repo.
@@ -611,24 +721,43 @@ class OSSWorkflow:
         return 10
 
     def _calculate_security_score(self, results: dict) -> float:
-        """Calculate security score (0-100) blending CVE history and OpenSSF Scorecard.
+        """Calculate security score (0-100) using EPSS-weighted CVE deductions + OpenSSF Scorecard.
 
-        When a Scorecard is available it contributes 40% of the score (covering
-        security practices, CI hardening, code review, branch protection, etc.)
-        and the CVE deduction contributes the remaining 60%.  Without a Scorecard
-        the full score comes from CVE history alone.
+        Each CVE deducts points based on its EPSS exploit-probability:
+          EPSS ≥ 0.5  (actively weaponised)    → -15 pts
+          EPSS 0.1–0.5 (moderate risk)          → -8 pts
+          EPSS < 0.1  (theoretical)             → -2 pts
+          No EPSS + CVSS CRITICAL               → -10 pts
+          No EPSS + CVSS HIGH                   → -5 pts
+          No EPSS + CVSS MEDIUM                 → -2 pts
+
+        When an OpenSSF Scorecard is available it contributes 40% of the final
+        score (covering CI hardening, code review, branch protection, etc.) and
+        the EPSS/CVE component contributes the remaining 60%.
         """
         cve_score = 100.0
-        if 'cve_data' in results:
-            cve_score -= results['cve_data']['critical'] * _CVE_CRITICAL_DEDUCTION
+        for cve in results.get('cve_data', {}).get('cves', []):
+            epss = cve.get('epss', 0.0)
+            severity = cve.get('severity', 'UNKNOWN')
+            if epss >= _EPSS_HIGH_THRESHOLD:
+                cve_score -= _DEDUCT_EPSS_HIGH
+            elif epss >= _EPSS_MED_THRESHOLD:
+                cve_score -= _DEDUCT_EPSS_MED
+            elif epss > 0:
+                cve_score -= _DEDUCT_EPSS_LOW
+            elif severity == 'CRITICAL':
+                cve_score -= _DEDUCT_CVSS_CRITICAL
+            elif severity == 'HIGH':
+                cve_score -= _DEDUCT_CVSS_HIGH
+            elif severity == 'MEDIUM':
+                cve_score -= _DEDUCT_CVSS_MEDIUM
         cve_score = max(0.0, min(100.0, cve_score))
 
         if 'scorecard_data' in results:
-            # Scorecard is 0-10; convert to 0-100
             scorecard_score = min(100.0, results['scorecard_data']['score'] * 10)
             return round(0.6 * cve_score + 0.4 * scorecard_score, 1)
 
-        return cve_score
+        return round(cve_score, 1)
 
     def _calculate_trust_score(self, results: dict) -> float:
         """Calculate trustworthiness score (0-100).

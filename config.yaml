@@ -27,6 +27,16 @@ risk:
     verified_individual: 1.2
     anonymous: 1.5
 
+# EPSS (Exploit Prediction Scoring System) — enriches each CVE with its
+# probability of being exploited in the wild (0-1 score from FIRST.org).
+# No API key required.  Deduction thresholds mirror _EPSS_*_THRESHOLD constants.
+epss:
+  enabled: true
+  timeout: 10          # seconds per batch request
+  high_threshold: 0.5  # ≥ this → actively weaponised   → -15 pts per CVE
+  med_threshold: 0.1   # ≥ this → moderate risk          → -8 pts per CVE
+                       # < med  → theoretical            → -2 pts per CVE
+
 # OpenSSF Scorecard — fetches a 0-10 security posture score for GitHub repos.
 # Set enabled: false to skip this API call.
 scorecard:

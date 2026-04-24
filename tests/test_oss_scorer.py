@@ -226,46 +226,95 @@ def requests_exception():
 
 
 # ---------------------------------------------------------------------------
-# OSSScorer.check_cves tests
+# OSSScorer.check_cves tests  (NVD v2 format)
 # ---------------------------------------------------------------------------
+
+def _nvd_v2_response(*cves):
+    """Build a minimal NVD v2 API response from (id, severity, base_score) tuples."""
+    vulns = []
+    for cve_id, severity, base_score in cves:
+        vulns.append({
+            'cve': {
+                'id': cve_id,
+                'metrics': {
+                    'cvssMetricV31': [{
+                        'cvssData': {
+                            'baseSeverity': severity,
+                            'baseScore': base_score,
+                        }
+                    }]
+                }
+            }
+        })
+    return {'vulnerabilities': vulns}
+
+
+def _epss_response(*pairs):
+    """Build a FIRST EPSS API response from (cve_id, epss_score) tuples."""
+    return {
+        'data': [
+            {'cve': cve_id, 'epss': str(epss), 'percentile': '0.9'}
+            for cve_id, epss in pairs
+        ]
+    }
+
 
 class TestCheckCves:
     @patch('oss_scorer.requests.get')
-    def test_success_counts_critical(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'result': {
-                'CVE_Items': [
-                    {'impact': {'baseMetricV2': {'severity': 'HIGH'}}},
-                    {'impact': {'baseMetricV2': {'severity': 'HIGH'}}},
-                    {'impact': {'baseMetricV2': {'severity': 'LOW'}}},
-                ]
-            }
-        }
-        mock_get.return_value = mock_response
+    def test_success_parses_nvd_v2_severity_bands(self, mock_get):
+        # First call: NVD rate-limiter probe (ignored), second: real NVD v2, third: EPSS
+        nvd_resp = MagicMock(status_code=200)
+        nvd_resp.json.return_value = _nvd_v2_response(
+            ('CVE-2021-0001', 'CRITICAL', 9.8),
+            ('CVE-2021-0002', 'HIGH', 7.5),
+            ('CVE-2021-0003', 'MEDIUM', 5.0),
+        )
+        epss_resp = MagicMock(status_code=200)
+        epss_resp.json.return_value = _epss_response()  # no EPSS data
+
+        mock_get.side_effect = [nvd_resp, nvd_resp, epss_resp]
 
         scorer = _make_scorer()
-        result = scorer.check_cves("requests")
+        result = scorer.check_cves("some-lib")
 
         assert result['total'] == 3
-        assert result['critical'] == 2
+        assert result['critical'] == 1
+        assert result['high'] == 1
+        assert result['medium'] == 1
 
     @patch('oss_scorer.requests.get')
-    def test_network_error_returns_zero_defaults(self, mock_get):
+    def test_epss_scores_attached_to_cves(self, mock_get):
+        nvd_resp = MagicMock(status_code=200)
+        nvd_resp.json.return_value = _nvd_v2_response(
+            ('CVE-2021-44228', 'CRITICAL', 10.0),
+        )
+        epss_resp = MagicMock(status_code=200)
+        epss_resp.json.return_value = _epss_response(('CVE-2021-44228', 0.975))
+
+        mock_get.side_effect = [nvd_resp, nvd_resp, epss_resp]
+
+        scorer = _make_scorer()
+        result = scorer.check_cves("log4j")
+
+        assert result['max_epss'] == 0.975
+        assert result['epss_high'] == 1
+        assert result['cves'][0]['epss'] == 0.975
+
+    @patch('oss_scorer.requests.get')
+    def test_network_error_returns_empty_structure(self, mock_get):
         mock_get.side_effect = requests_exception()
 
         scorer = _make_scorer()
         result = scorer.check_cves("some-package")
 
-        assert result == {'total': 0, 'critical': 0, 'last_updated': result['last_updated']}
         assert result['total'] == 0
+        assert result['cves'] == []
+        assert 'last_updated' in result
 
     @patch('oss_scorer.requests.get')
-    def test_non_200_returns_zero_defaults(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.status_code = 403
-        mock_get.return_value = mock_response
+    def test_non_200_returns_empty_structure(self, mock_get):
+        bad_resp = MagicMock(status_code=403)
+        mock_get.return_value = bad_resp
 
         scorer = _make_scorer()
         result = scorer.check_cves("some-package")
@@ -273,29 +322,121 @@ class TestCheckCves:
 
 
 # ---------------------------------------------------------------------------
-# OSSWorkflow._calculate_security_score tests
+# OSSScorer.get_epss_scores tests
+# ---------------------------------------------------------------------------
+
+class TestGetEpssScores:
+    @patch('oss_scorer.requests.get')
+    def test_returns_epss_and_percentile(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = _epss_response(
+            ('CVE-2021-44228', 0.975),
+            ('CVE-2021-45046', 0.312),
+        )
+        scorer = _make_scorer()
+        result = scorer.get_epss_scores(['CVE-2021-44228', 'CVE-2021-45046'])
+
+        assert result['CVE-2021-44228']['epss'] == 0.975
+        assert result['CVE-2021-45046']['epss'] == 0.312
+
+    @patch('oss_scorer.requests.get')
+    def test_network_error_returns_empty(self, mock_get):
+        mock_get.side_effect = requests_exception()
+        scorer = _make_scorer()
+        assert scorer.get_epss_scores(['CVE-2021-44228']) == {}
+
+    def test_empty_list_returns_empty(self):
+        scorer = _make_scorer()
+        assert scorer.get_epss_scores([]) == {}
+
+    @patch('oss_scorer.requests.get')
+    def test_batches_over_30_cves(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {'data': []}
+
+        scorer = _make_scorer()
+        cve_ids = [f"CVE-2024-{i:04d}" for i in range(35)]
+        scorer.get_epss_scores(cve_ids)
+
+        assert mock_get.call_count == 2  # 30 + 5 → 2 batches
+
+
+# ---------------------------------------------------------------------------
+# OSSWorkflow._calculate_security_score tests  (EPSS-weighted)
 # ---------------------------------------------------------------------------
 
 class TestCalculateSecurityScore:
-    def test_no_cves_is_perfect(self):
-        workflow = _make_workflow()
-        score = workflow._calculate_security_score({'cve_data': {'critical': 0}})
-        assert score == 100
-
-    def test_each_critical_deducts_5(self):
-        workflow = _make_workflow()
-        score = workflow._calculate_security_score({'cve_data': {'critical': 4}})
-        assert score == 80
-
-    def test_does_not_go_below_zero(self):
-        workflow = _make_workflow()
-        score = workflow._calculate_security_score({'cve_data': {'critical': 999}})
-        assert score == 0
+    def _cve(self, severity='UNKNOWN', epss=0.0):
+        return {'severity': severity, 'epss': epss, 'base_score': 7.0, 'id': 'CVE-X'}
 
     def test_no_cve_data_returns_100(self):
-        workflow = _make_workflow()
-        score = workflow._calculate_security_score({})
-        assert score == 100
+        assert _make_workflow()._calculate_security_score({}) == 100.0
+
+    def test_empty_cves_list_returns_100(self):
+        assert _make_workflow()._calculate_security_score({'cve_data': {'cves': []}}) == 100.0
+
+    def test_high_epss_deducts_15(self):
+        # EPSS ≥ 0.5 → -15 pts
+        result = _make_workflow()._calculate_security_score(
+            {'cve_data': {'cves': [self._cve(epss=0.75)]}}
+        )
+        assert result == 85.0
+
+    def test_medium_epss_deducts_8(self):
+        # EPSS 0.1–0.5 → -8 pts
+        result = _make_workflow()._calculate_security_score(
+            {'cve_data': {'cves': [self._cve(epss=0.25)]}}
+        )
+        assert result == 92.0
+
+    def test_low_epss_deducts_2(self):
+        # EPSS > 0 but < 0.1 → -2 pts
+        result = _make_workflow()._calculate_security_score(
+            {'cve_data': {'cves': [self._cve(epss=0.01)]}}
+        )
+        assert result == 98.0
+
+    def test_no_epss_critical_severity_deducts_10(self):
+        result = _make_workflow()._calculate_security_score(
+            {'cve_data': {'cves': [self._cve(severity='CRITICAL', epss=0.0)]}}
+        )
+        assert result == 90.0
+
+    def test_no_epss_high_severity_deducts_5(self):
+        result = _make_workflow()._calculate_security_score(
+            {'cve_data': {'cves': [self._cve(severity='HIGH', epss=0.0)]}}
+        )
+        assert result == 95.0
+
+    def test_no_epss_medium_severity_deducts_2(self):
+        result = _make_workflow()._calculate_security_score(
+            {'cve_data': {'cves': [self._cve(severity='MEDIUM', epss=0.0)]}}
+        )
+        assert result == 98.0
+
+    def test_multiple_cves_accumulate_deductions(self):
+        # 1 actively exploited (-15) + 2 CVSS HIGH no EPSS (-5 each) = -25 → 75
+        cves = [
+            self._cve(epss=0.9),
+            self._cve(severity='HIGH', epss=0.0),
+            self._cve(severity='HIGH', epss=0.0),
+        ]
+        result = _make_workflow()._calculate_security_score({'cve_data': {'cves': cves}})
+        assert result == 75.0
+
+    def test_score_does_not_go_below_zero(self):
+        cves = [self._cve(epss=0.9) for _ in range(20)]
+        result = _make_workflow()._calculate_security_score({'cve_data': {'cves': cves}})
+        assert result == 0.0
+
+    def test_scorecard_blended_at_40_percent(self):
+        # CVE score = 85 (1 high-EPSS), Scorecard = 5.0 → 50 out of 100
+        # expected = 0.6*85 + 0.4*50 = 51+20 = 71
+        result = _make_workflow()._calculate_security_score({
+            'cve_data': {'cves': [self._cve(epss=0.75)]},
+            'scorecard_data': {'score': 5.0, 'date': '', 'checks': {}},
+        })
+        assert result == 71.0
 
 
 # ---------------------------------------------------------------------------
@@ -486,10 +627,13 @@ class TestEvaluateComponentValidation:
 
     @patch('oss_scorer.requests.get')
     def test_valid_non_critical_returns_result(self, mock_get):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {'result': {'CVE_Items': []}}
-        mock_get.return_value = mock_response
+        # NVD v2 empty response (two calls: rate-limiter probe + actual)
+        # followed by EPSS empty response
+        nvd_resp = MagicMock(status_code=200)
+        nvd_resp.json.return_value = {'vulnerabilities': []}
+        epss_resp = MagicMock(status_code=200)
+        epss_resp.json.return_value = {'data': []}
+        mock_get.return_value = nvd_resp  # reuse for all calls
 
         wf = _make_workflow()
         result = wf.evaluate_component({
@@ -566,13 +710,15 @@ class TestSecurityScoreBlending:
 
     def test_perfect_scorecard_boosts_score(self):
         wf = _make_workflow()
-        # 4 critical CVEs → CVE score = 80; perfect scorecard (10→100)
-        # expected = 0.6*80 + 0.4*100 = 48+40 = 88
+        # 4 CRITICAL CVEs, no EPSS → -10 each → CVE score = 60
+        # perfect scorecard (10 → 100) → 0.6*60 + 0.4*100 = 76
+        cves = [{'severity': 'CRITICAL', 'epss': 0.0, 'id': f'CVE-X-{i}', 'base_score': 9.8}
+                for i in range(4)]
         result = wf._calculate_security_score({
-            'cve_data': {'critical': 4},
+            'cve_data': {'cves': cves},
             'scorecard_data': {'score': 10.0, 'date': '', 'checks': {}}
         })
-        assert result == 88.0
+        assert result == 76.0
 
     def test_zero_scorecard_penalises(self):
         wf = _make_workflow()
