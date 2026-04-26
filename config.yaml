@@ -101,6 +101,27 @@ scorecard:
   enabled: true
   timeout: 10
 
+# ── OSV (Open Source Vulnerabilities) ─────────────────────────────────────────
+# Queries api.osv.dev which aggregates NVD, GitHub Security Advisories (GHSA),
+# and the ossf/malicious-packages dataset in a single package-aware API.
+# GHSA and ecosystem-specific advisories without a CVE alias are counted as
+# 'extra_advisories' and apply an additional security score penalty.
+osv:
+  enabled: true
+  timeout: 10
+  extra_advisory_deduction: 3    # points deducted per non-CVE, non-MAL advisory
+  extra_advisory_max_penalty: 20 # cap on total extra-advisory deduction
+
+# ── Malicious Packages (ossf/malicious-packages via OSV MAL- advisories) ──────
+# The ossf/malicious-packages dataset tracks confirmed supply-chain attacks:
+# typosquatting, backdoored releases, and dependency-confusion attacks.
+# Entries are ingested by OSV.dev under MAL-YYYY-NNNN advisory IDs.
+# When a package is flagged, its security score is forced to 0 and approval
+# is overridden to PROHIBITED regardless of any other signals.
+malicious_packages:
+  enabled: true
+  auto_prohibit: true  # set false to score normally and log only
+
 # ── Contributor Geolocation ───────────────────────────────────────────────────
 geocoding:
   enabled: true

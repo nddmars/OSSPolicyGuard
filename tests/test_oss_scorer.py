@@ -55,6 +55,12 @@ MINIMAL_CONFIG = {
         'nominatim_url': 'https://nominatim.openstreetmap.org',
         'user_agent': 'test/1.0',
     },
+    'osv': {
+        'enabled': True, 'timeout': 5,
+        'extra_advisory_deduction': 3,
+        'extra_advisory_max_penalty': 20,
+    },
+    'malicious_packages': {'enabled': True, 'auto_prohibit': True},
 }
 
 
@@ -1141,3 +1147,282 @@ class TestCalculateCommunityScoreWithDownloads:
     def test_low_downloads_below_threshold_scores_40(self):
         wf = _make_workflow()
         assert wf._calculate_community_score(self._results(weekly=500)) == 40.0
+
+
+# ---------------------------------------------------------------------------
+# OSSScorer._resolve_osv_ecosystem tests
+# ---------------------------------------------------------------------------
+
+class TestResolveOsvEcosystem:
+    def test_direct_npm_maps_to_npm(self):
+        assert _make_scorer()._resolve_osv_ecosystem('npm') == 'npm'
+
+    def test_direct_pypi_maps_to_pypi(self):
+        assert _make_scorer()._resolve_osv_ecosystem('pypi') == 'PyPI'
+
+    def test_language_python_maps_to_pypi(self):
+        assert _make_scorer()._resolve_osv_ecosystem('python') == 'PyPI'
+
+    def test_language_javascript_maps_to_npm(self):
+        assert _make_scorer()._resolve_osv_ecosystem('javascript') == 'npm'
+
+    def test_language_rust_maps_to_crates_io(self):
+        assert _make_scorer()._resolve_osv_ecosystem('rust') == 'crates.io'
+
+    def test_language_java_maps_to_maven_even_when_registry_disabled(self):
+        # maven is disabled for download counting but OSV security check should still work
+        assert _make_scorer()._resolve_osv_ecosystem('java') == 'Maven'
+
+    def test_language_ruby_maps_to_rubygems(self):
+        assert _make_scorer()._resolve_osv_ecosystem('ruby') == 'RubyGems'
+
+    def test_unknown_ecosystem_returns_none(self):
+        assert _make_scorer()._resolve_osv_ecosystem('cobol') is None
+
+    def test_case_insensitive(self):
+        assert _make_scorer()._resolve_osv_ecosystem('PYTHON') == 'PyPI'
+        assert _make_scorer()._resolve_osv_ecosystem('NPM') == 'npm'
+
+
+# ---------------------------------------------------------------------------
+# OSSScorer.check_osv tests
+# ---------------------------------------------------------------------------
+
+def _osv_response(*advisories):
+    """Build a minimal OSV API response from (id, summary, aliases) tuples."""
+    return {
+        'vulns': [
+            {'id': vid, 'summary': summary, 'aliases': aliases}
+            for vid, summary, aliases in advisories
+        ]
+    }
+
+
+class TestCheckOsv:
+    @patch('oss_scorer.requests.post')
+    def test_clean_package_returns_empty(self, mock_post):
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {'vulns': []}
+
+        result = _make_scorer().check_osv('lodash', 'npm')
+
+        assert result['is_malicious'] is False
+        assert result['total'] == 0
+        assert result['extra_advisories'] == 0
+
+    @patch('oss_scorer.requests.post')
+    def test_malicious_package_flagged(self, mock_post):
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = _osv_response(
+            ('MAL-2023-1234', 'Malicious code in package', []),
+        )
+
+        result = _make_scorer().check_osv('typosquatter', 'npm')
+
+        assert result['is_malicious'] is True
+        assert result['malicious_count'] == 1
+        assert 'MAL-2023-1234' in result['malicious_ids']
+
+    @patch('oss_scorer.requests.post')
+    def test_ghsa_advisory_counted_as_extra(self, mock_post):
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = _osv_response(
+            ('GHSA-xxxx-yyyy-zzzz', 'Prototype pollution', []),
+        )
+
+        result = _make_scorer().check_osv('some-package', 'npm')
+
+        assert result['extra_advisories'] == 1
+        assert result['is_malicious'] is False
+
+    @patch('oss_scorer.requests.post')
+    def test_cve_advisory_not_counted_as_extra(self, mock_post):
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = _osv_response(
+            ('CVE-2021-44228', 'Log4Shell', []),
+        )
+
+        result = _make_scorer().check_osv('log4j', 'java')
+
+        # Already captured by NVD pipeline — not extra
+        assert result['extra_advisories'] == 0
+
+    @patch('oss_scorer.requests.post')
+    def test_ghsa_with_cve_alias_not_counted_as_extra(self, mock_post):
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = _osv_response(
+            ('GHSA-xxxx-yyyy-zzzz', 'Vuln', ['CVE-2021-44228']),
+        )
+
+        result = _make_scorer().check_osv('some-package', 'npm')
+
+        # Has CVE alias → already in NVD pipeline, not counted as extra
+        assert result['extra_advisories'] == 0
+
+    @patch('oss_scorer.requests.post')
+    def test_mixed_advisories(self, mock_post):
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = _osv_response(
+            ('MAL-2023-9999', 'Malicious', []),
+            ('GHSA-aaaa-bbbb-cccc', 'Extra vuln', []),
+            ('CVE-2021-0001', 'Known CVE', []),
+        )
+
+        result = _make_scorer().check_osv('bad-package', 'npm')
+
+        assert result['is_malicious'] is True
+        assert result['malicious_count'] == 1
+        assert result['extra_advisories'] == 1
+        assert result['total'] == 3
+
+    def test_osv_disabled_returns_empty(self):
+        cfg = {**MINIMAL_CONFIG, 'osv': {'enabled': False, 'timeout': 5,
+                                          'extra_advisory_deduction': 3,
+                                          'extra_advisory_max_penalty': 20}}
+        result = _make_scorer(cfg).check_osv('lodash', 'npm')
+        assert result['total'] == 0
+        assert result['is_malicious'] is False
+
+    def test_unknown_ecosystem_returns_empty(self):
+        result = _make_scorer().check_osv('mylib', 'cobol')
+        assert result['total'] == 0
+
+    @patch('oss_scorer.requests.post')
+    def test_non_200_returns_empty(self, mock_post):
+        mock_post.return_value.status_code = 429
+        result = _make_scorer().check_osv('lodash', 'npm')
+        assert result['total'] == 0
+
+    @patch('oss_scorer.requests.post')
+    def test_network_error_returns_empty(self, mock_post):
+        mock_post.side_effect = requests_exception()
+        result = _make_scorer().check_osv('lodash', 'npm')
+        assert result['total'] == 0
+
+    @patch('oss_scorer.requests.post')
+    def test_malicious_packages_disabled_does_not_flag(self, mock_post):
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = _osv_response(
+            ('MAL-2023-1234', 'Malicious', []),
+        )
+        cfg = {**MINIMAL_CONFIG, 'malicious_packages': {'enabled': False, 'auto_prohibit': True}}
+        result = _make_scorer(cfg).check_osv('package', 'npm')
+        # MAL- advisory present but malicious_packages disabled → not flagged
+        assert result['is_malicious'] is False
+        assert result['malicious_count'] == 0
+        # MAL- should NOT be counted as extra_advisories either
+        assert result['extra_advisories'] == 0
+
+
+# ---------------------------------------------------------------------------
+# OSV effect on _calculate_security_score
+# ---------------------------------------------------------------------------
+
+class TestOsvSecurityScoreEffect:
+    def test_malicious_package_forces_score_to_zero(self):
+        wf = _make_workflow()
+        result = wf._calculate_security_score({
+            'osv_data': {
+                'is_malicious': True, 'malicious_count': 1,
+                'malicious_ids': ['MAL-2023-1234'], 'extra_advisories': 0,
+            }
+        })
+        assert result == 0.0
+
+    def test_extra_osv_advisories_reduce_score(self):
+        wf = _make_workflow()
+        # 2 GHSA advisories × 3 pts each = 6 pts deducted
+        result = wf._calculate_security_score({
+            'osv_data': {'is_malicious': False, 'extra_advisories': 2, 'malicious_count': 0}
+        })
+        assert result == 94.0
+
+    def test_extra_osv_penalty_capped_at_max(self):
+        wf = _make_workflow()
+        # 10 extra × 3 pts = 30, but max_penalty=20 → capped at 20
+        result = wf._calculate_security_score({
+            'osv_data': {'is_malicious': False, 'extra_advisories': 10, 'malicious_count': 0}
+        })
+        assert result == 80.0
+
+    def test_auto_prohibit_false_does_not_force_zero(self):
+        cfg = {**MINIMAL_CONFIG, 'malicious_packages': {'enabled': True, 'auto_prohibit': False}}
+        wf = _make_workflow(cfg)
+        result = wf._calculate_security_score({
+            'osv_data': {
+                'is_malicious': True, 'malicious_count': 1,
+                'malicious_ids': ['MAL-2023-1234'], 'extra_advisories': 0,
+            }
+        })
+        # auto_prohibit=False → not forced to 0, scored normally (no CVEs → 100)
+        assert result == 100.0
+
+    def test_extra_advisories_plus_cves_accumulate(self):
+        wf = _make_workflow()
+        # 1 HIGH CVE (no EPSS) → -5; 2 GHSA extra → -6; total = -11 → 89
+        result = wf._calculate_security_score({
+            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.0, 'id': 'CVE-X'}]},
+            'osv_data': {'is_malicious': False, 'extra_advisories': 2, 'malicious_count': 0},
+        })
+        assert result == 89.0
+
+    def test_no_osv_data_unchanged(self):
+        wf = _make_workflow()
+        # Absence of osv_data should not affect existing scoring
+        result = wf._calculate_security_score({
+            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.0, 'id': 'CVE-X'}]}
+        })
+        assert result == 95.0
+
+
+# ---------------------------------------------------------------------------
+# Malicious package override in evaluate_component
+# ---------------------------------------------------------------------------
+
+class TestEvaluateMaliciousComponent:
+    @patch('oss_scorer.requests.post')
+    @patch('oss_scorer.requests.get')
+    def test_malicious_package_forced_prohibited(self, mock_get, mock_post):
+        nvd_resp = MagicMock(status_code=200)
+        nvd_resp.json.return_value = {'vulnerabilities': []}
+        epss_resp = MagicMock(status_code=200)
+        epss_resp.json.return_value = {'data': []}
+        mock_get.return_value = nvd_resp
+
+        osv_resp = MagicMock(status_code=200)
+        osv_resp.json.return_value = _osv_response(
+            ('MAL-2023-9999', 'Backdoor in release', []),
+        )
+        mock_post.return_value = osv_resp
+
+        wf = _make_workflow()
+        result = wf.evaluate_component({
+            'package_name': 'evil-pkg',
+            'ecosystem': 'npm',
+            'criticality': 'Non-Critical',
+        })
+
+        assert result.get('is_malicious') is True
+        assert result['approval'] == 'PROHIBITED'
+        assert result['risk_level'] == 'High'
+
+    @patch('oss_scorer.requests.post')
+    @patch('oss_scorer.requests.get')
+    def test_clean_package_not_flagged(self, mock_get, mock_post):
+        nvd_resp = MagicMock(status_code=200)
+        nvd_resp.json.return_value = {'vulnerabilities': []}
+        mock_get.return_value = nvd_resp
+
+        osv_resp = MagicMock(status_code=200)
+        osv_resp.json.return_value = {'vulns': []}
+        mock_post.return_value = osv_resp
+
+        wf = _make_workflow()
+        result = wf.evaluate_component({
+            'package_name': 'safe-pkg',
+            'ecosystem': 'npm',
+            'criticality': 'Non-Critical',
+        })
+
+        assert result.get('is_malicious') is None  # key absent when not malicious
+        assert result['approval'] != 'PROHIBITED'

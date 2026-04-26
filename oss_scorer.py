@@ -41,6 +41,17 @@ _CVE_LOOKBACK_DAYS = 3 * 365
 
 _VALID_CRITICALITY = {"Mission Critical", "Business Critical", "Non-Critical"}
 
+# Map OSSPolicyGuard registry names to OSV.dev ecosystem identifiers
+_OSV_ECOSYSTEM_MAP: dict[str, str] = {
+    'npm':       'npm',
+    'pypi':      'PyPI',
+    'rubygems':  'RubyGems',
+    'crates':    'crates.io',
+    'nuget':     'NuGet',
+    'packagist': 'Packagist',
+    'maven':     'Maven',
+}
+
 # Fast-path lookup: lowercase location token → ISO-3166-1 alpha-2 country code.
 # Covers the high-risk countries from config plus the most common contributor locations
 # so that Nominatim is only needed for rare/ambiguous strings.
@@ -163,6 +174,17 @@ class OSSConfig:
                 'maven':     {'enabled': False, 'timeout': 10,
                               'languages': ['java', 'kotlin', 'scala', 'groovy']},
             })
+
+            # OSV and malicious-package check defaults
+            self.config.setdefault('osv', {})
+            self.config['osv'].setdefault('enabled', True)
+            self.config['osv'].setdefault('timeout', 10)
+            self.config['osv'].setdefault('extra_advisory_deduction', 3)
+            self.config['osv'].setdefault('extra_advisory_max_penalty', 20)
+
+            self.config.setdefault('malicious_packages', {})
+            self.config['malicious_packages'].setdefault('enabled', True)
+            self.config['malicious_packages'].setdefault('auto_prohibit', True)
 
             # Environment variable overrides (higher priority than config.yaml)
             if os.environ.get('GITHUB_TOKEN'):
@@ -440,6 +462,114 @@ class OSSScorer:
                 logger.warning("EPSS API error for batch [%s...]: %s", batch[0], e)
 
         return results
+
+    def _resolve_osv_ecosystem(self, ecosystem: str) -> str | None:
+        """Map a registry or language name to an OSV.dev ecosystem identifier.
+
+        Unlike _resolve_registry(), this ignores the 'enabled' flag so that
+        OSV security checks run even when download counting is disabled for a
+        registry (e.g. Maven has no public download API but OSV covers it).
+        """
+        key = ecosystem.lower().strip()
+
+        # Direct registry-name match in OSV map
+        if key in _OSV_ECOSYSTEM_MAP:
+            return _OSV_ECOSYSTEM_MAP[key]
+
+        # Language alias scan across all registries (ignores enabled flag)
+        for reg_name, reg_cfg in self.config.get('registries', {}).items():
+            if not isinstance(reg_cfg, dict):
+                continue
+            if key in [l.lower() for l in reg_cfg.get('languages', [])]:
+                return _OSV_ECOSYSTEM_MAP.get(reg_name)
+
+        return None
+
+    def check_osv(self, package_name: str, ecosystem: str = "npm") -> dict:
+        """Query OSV.dev for known vulnerabilities and malicious package flags.
+
+        OSV aggregates advisories from NVD, GitHub Security Advisories (GHSA),
+        and the ossf/malicious-packages dataset.  Advisories with a MAL- prefix
+        indicate packages confirmed as intentionally malicious (typosquatting,
+        backdoors, supply-chain attacks).
+
+        Returns a dict with:
+          is_malicious      – True if any MAL- advisory was found
+          malicious_ids     – list of MAL- advisory IDs
+          malicious_count   – number of MAL- advisories
+          extra_advisories  – GHSA/ecosystem advisories without a CVE alias
+                              (supplements the NVD/EPSS pipeline)
+          total             – total advisory count
+          advisories        – full list (id, summary, is_malicious, aliases)
+        """
+        _empty: dict = {
+            'total': 0, 'malicious_count': 0, 'is_malicious': False,
+            'malicious_ids': [], 'extra_advisories': 0, 'advisories': [],
+            'last_updated': datetime.now().isoformat(),
+        }
+
+        if not self.config.get('osv', {}).get('enabled', True):
+            return _empty
+
+        osv_ecosystem = self._resolve_osv_ecosystem(ecosystem)
+        if not osv_ecosystem:
+            logger.info("No OSV ecosystem mapping for %r — skipping OSV check", ecosystem)
+            return _empty
+
+        # Whether to honour MAL- advisory flags (requires malicious_packages.enabled)
+        check_malicious = self.config.get('malicious_packages', {}).get('enabled', True)
+
+        timeout = self.config.get('osv', {}).get('timeout', 10)
+        try:
+            resp = requests.post(
+                "https://api.osv.dev/v1/query",
+                json={"package": {"name": package_name, "ecosystem": osv_ecosystem}},
+                timeout=timeout,
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    "OSV API returned %s for %s/%s", resp.status_code,
+                    osv_ecosystem, package_name
+                )
+                return _empty
+
+            advisories: list[dict] = []
+            malicious_ids: list[str] = []
+            extra_count = 0
+
+            for v in resp.json().get('vulns', []):
+                vid = v.get('id', '')
+                aliases = v.get('aliases', [])
+                is_mal = check_malicious and vid.startswith('MAL-')
+
+                advisories.append({
+                    'id': vid,
+                    'summary': v.get('summary', ''),
+                    'is_malicious': is_mal,
+                    'aliases': aliases,
+                })
+
+                if is_mal:
+                    malicious_ids.append(vid)
+                elif (not vid.startswith('CVE-')
+                      and not vid.startswith('MAL-')
+                      and not any(a.startswith('CVE-') for a in aliases)):
+                    # GHSA or ecosystem advisory not already captured by NVD pipeline
+                    extra_count += 1
+
+            return {
+                'total': len(advisories),
+                'malicious_count': len(malicious_ids),
+                'is_malicious': len(malicious_ids) > 0,
+                'malicious_ids': malicious_ids,
+                'extra_advisories': extra_count,
+                'advisories': advisories,
+                'last_updated': datetime.now().isoformat(),
+            }
+
+        except requests.RequestException as e:
+            logger.error("OSV API error for %s/%s: %s", osv_ecosystem, package_name, e)
+            return _empty
 
     def _resolve_registry(self, ecosystem: str) -> str | None:
         """Map an ecosystem or language name to an enabled registry name.
@@ -870,6 +1000,16 @@ class OSSWorkflow:
             cve_data = self.scorer.check_cves(component_data['package_name'])
             results['cve_data'] = cve_data
 
+            # Vulnerability + malicious-package check via OSV / ossf/malicious-packages
+            if ecosystem:
+                osv_data = self.scorer.check_osv(component_data['package_name'], ecosystem)
+                results['osv_data'] = osv_data
+            else:
+                logger.info(
+                    "No 'ecosystem' or 'language' in component_data — "
+                    "OSV check skipped for %s", component_data['package_name']
+                )
+
         # Calculate scores
         scores = {
             'activity': self._calculate_activity_score(results),
@@ -894,6 +1034,13 @@ class OSSWorkflow:
             'approval': approval,
             'risk_level': self._get_risk_level(total_score)
         })
+
+        # Malicious package: force PROHIBITED regardless of score or criticality
+        if (results.get('osv_data', {}).get('is_malicious')
+                and self.config.get('malicious_packages', {}).get('auto_prohibit', True)):
+            results['is_malicious'] = True
+            results['approval'] = 'PROHIBITED'
+            results['risk_level'] = 'High'
 
         return results
 
@@ -934,6 +1081,13 @@ class OSSWorkflow:
         score (covering CI hardening, code review, branch protection, etc.) and
         the EPSS/CVE component contributes the remaining 60%.
         """
+        osv_data = results.get('osv_data', {})
+
+        # Malicious package (ossf/malicious-packages via OSV) → immediate zero
+        if (osv_data.get('is_malicious')
+                and self.config.get('malicious_packages', {}).get('auto_prohibit', True)):
+            return 0.0
+
         cve_score = 100.0
         for cve in results.get('cve_data', {}).get('cves', []):
             epss = cve.get('epss', 0.0)
@@ -951,6 +1105,13 @@ class OSSWorkflow:
             elif severity == 'MEDIUM':
                 cve_score -= _DEDUCT_CVSS_MEDIUM
         cve_score = max(0.0, min(100.0, cve_score))
+
+        # OSV extra advisories (GHSA/ecosystem-specific, not already in NVD)
+        extra = osv_data.get('extra_advisories', 0)
+        if extra > 0:
+            deduction = self.config.get('osv', {}).get('extra_advisory_deduction', 3)
+            max_pen = self.config.get('osv', {}).get('extra_advisory_max_penalty', 20)
+            cve_score = max(0.0, cve_score - min(max_pen, extra * deduction))
 
         if 'scorecard_data' in results:
             scorecard_score = min(100.0, results['scorecard_data']['score'] * 10)
