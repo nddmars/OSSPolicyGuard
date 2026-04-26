@@ -2,7 +2,7 @@
 nvd:
   api_key: "<<you nvd key>>"  # Get from https://nvd.nist.gov/developers/request-an-api-key
   rate_limit: 5  # requests per second
-  
+
 github:
   token: "<<your Github>>"  # GitHub personal access token
   timeout: 10  # seconds
@@ -18,6 +18,15 @@ scoring:
     high: 80
     medium: 70
     low: 60
+  # Community score blends download count (primary) with star count (secondary).
+  # weekly_high/med/low are the weekly download thresholds that map to 100/80/60.
+  community:
+    weekly_high: 1_000_000   # > 1 M/week  → score 100
+    weekly_med:    100_000   # > 100 K/week → score 80
+    weekly_low:     10_000   # > 10 K/week  → score 60
+                             # ≤ 10 K/week  → score 40
+    download_weight: 0.7     # when both downloads AND stars available
+    star_weight: 0.3
 
 risk:
   high_risk_countries: ["CN", "RU", "IR", "KP", "SY"]
@@ -26,3 +35,96 @@ risk:
     corporate: 1.0
     verified_individual: 1.2
     anonymous: 1.5
+
+# ── Package Registries ────────────────────────────────────────────────────────
+# Each key is the canonical registry name and also the value to pass as
+# 'ecosystem' in component_data.
+#
+# 'languages' lists aliases that auto-resolve to this registry, so callers can
+# pass either the ecosystem name ('npm') or the language ('javascript').
+#
+# Set enabled: false to skip download-count lookups for a registry without
+# removing its configuration.
+registries:
+  npm:
+    enabled: true
+    timeout: 10
+    languages: [javascript, typescript, nodejs, node]
+
+  pypi:
+    enabled: true
+    timeout: 10
+    languages: [python]
+
+  rubygems:
+    enabled: true
+    timeout: 10
+    languages: [ruby]
+    # RubyGems has no public weekly API; the fetcher estimates from the
+    # cumulative version download count divided by 52.
+
+  crates:
+    enabled: true
+    timeout: 10
+    languages: [rust]
+    # crates.io 'recent_downloads' covers 90 days; the fetcher divides by 13
+    # to produce a weekly estimate.
+
+  nuget:
+    enabled: true
+    timeout: 10
+    languages: [csharp, "c#", dotnet]
+    # NuGet exposes only total downloads; the fetcher estimates weekly by
+    # dividing by a two-year assumed lifetime (104 weeks).
+
+  packagist:
+    enabled: true
+    timeout: 10
+    languages: [php]
+    # Packagist requires 'vendor/package' format for the package_name field.
+    # Monthly download counts are divided by 4 for a weekly estimate.
+
+  maven:
+    enabled: false          # Maven Central has no public download-count API.
+    timeout: 10
+    languages: [java, kotlin, scala, groovy]
+
+# ── EPSS ─────────────────────────────────────────────────────────────────────
+epss:
+  enabled: true
+  timeout: 10
+  high_threshold: 0.5
+  med_threshold: 0.1
+
+# ── OpenSSF Scorecard ─────────────────────────────────────────────────────────
+scorecard:
+  enabled: true
+  timeout: 10
+
+# ── OSV (Open Source Vulnerabilities) ─────────────────────────────────────────
+# Queries api.osv.dev which aggregates NVD, GitHub Security Advisories (GHSA),
+# and the ossf/malicious-packages dataset in a single package-aware API.
+# GHSA and ecosystem-specific advisories without a CVE alias are counted as
+# 'extra_advisories' and apply an additional security score penalty.
+osv:
+  enabled: true
+  timeout: 10
+  extra_advisory_deduction: 3    # points deducted per non-CVE, non-MAL advisory
+  extra_advisory_max_penalty: 20 # cap on total extra-advisory deduction
+
+# ── Malicious Packages (ossf/malicious-packages via OSV MAL- advisories) ──────
+# The ossf/malicious-packages dataset tracks confirmed supply-chain attacks:
+# typosquatting, backdoored releases, and dependency-confusion attacks.
+# Entries are ingested by OSV.dev under MAL-YYYY-NNNN advisory IDs.
+# When a package is flagged, its security score is forced to 0 and approval
+# is overridden to PROHIBITED regardless of any other signals.
+malicious_packages:
+  enabled: true
+  auto_prohibit: true  # set false to score normally and log only
+
+# ── Contributor Geolocation ───────────────────────────────────────────────────
+geocoding:
+  enabled: true
+  max_contributors: 10
+  nominatim_url: "https://nominatim.openstreetmap.org"
+  user_agent: "OSSPolicyGuard/1.0 (opensource-policy-guard)"
