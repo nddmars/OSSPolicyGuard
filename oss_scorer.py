@@ -141,6 +141,29 @@ class OSSConfig:
             self.config['scoring']['weights'].setdefault('security', 35)
             self.config['scoring']['weights'].setdefault('community', 15)
 
+            # Community sub-section defaults
+            self.config['scoring'].setdefault('community', {})
+            comm = self.config['scoring']['community']
+            comm.setdefault('weekly_high', 1_000_000)
+            comm.setdefault('weekly_med', 100_000)
+            comm.setdefault('weekly_low', 10_000)
+            comm.setdefault('download_weight', 0.7)
+            comm.setdefault('star_weight', 0.3)
+
+            # Registry defaults — only applied when registries section is absent
+            self.config.setdefault('registries', {
+                'npm':       {'enabled': True, 'timeout': 10,
+                              'languages': ['javascript', 'typescript', 'nodejs', 'node']},
+                'pypi':      {'enabled': True, 'timeout': 10, 'languages': ['python']},
+                'rubygems':  {'enabled': True, 'timeout': 10, 'languages': ['ruby']},
+                'crates':    {'enabled': True, 'timeout': 10, 'languages': ['rust']},
+                'nuget':     {'enabled': True, 'timeout': 10,
+                              'languages': ['csharp', 'c#', 'dotnet']},
+                'packagist': {'enabled': True, 'timeout': 10, 'languages': ['php']},
+                'maven':     {'enabled': False, 'timeout': 10,
+                              'languages': ['java', 'kotlin', 'scala', 'groovy']},
+            })
+
             # Environment variable overrides (higher priority than config.yaml)
             if os.environ.get('GITHUB_TOKEN'):
                 self.config['github']['token'] = os.environ['GITHUB_TOKEN']
@@ -418,6 +441,165 @@ class OSSScorer:
 
         return results
 
+    def _resolve_registry(self, ecosystem: str) -> str | None:
+        """Map an ecosystem or language name to an enabled registry name.
+
+        Tries a direct key match first (e.g. 'npm' → 'npm'), then falls back
+        to scanning each registry's 'languages' list.  Returns None when the
+        ecosystem is unknown or the matching registry is disabled.
+        """
+        key = ecosystem.lower().strip()
+        registries = self.config.get('registries', {})
+
+        # Direct match — caller already knows the registry name
+        if key in registries:
+            if registries[key].get('enabled', True):
+                return key
+            logger.info("Registry %r is disabled in config", key)
+            return None
+
+        # Language alias match
+        for reg_name, reg_cfg in registries.items():
+            if not isinstance(reg_cfg, dict):
+                continue
+            langs = [l.lower() for l in reg_cfg.get('languages', [])]
+            if key in langs:
+                if reg_cfg.get('enabled', True):
+                    return reg_name
+                logger.info("Registry %r (matched via language %r) is disabled", reg_name, key)
+                return None
+
+        logger.info("No registry found for ecosystem %r", ecosystem)
+        return None
+
+    def get_download_count(self, package_name: str, ecosystem: str) -> dict | None:
+        """Fetch weekly download statistics from the appropriate package registry.
+
+        The registry is resolved from config via ecosystem/language name.
+        Returns a dict with keys: weekly_downloads (int), period (str),
+        registry (str).  Returns None on unknown ecosystem or fetch failure.
+        All periods are normalised to a weekly equivalent where possible.
+        """
+        registry = self._resolve_registry(ecosystem)
+        if registry is None:
+            return None
+
+        timeout = self.config['registries'][registry].get('timeout', 10)
+        try:
+            if registry == 'npm':
+                return self._fetch_npm(package_name, timeout)
+            if registry == 'pypi':
+                return self._fetch_pypi(package_name, timeout)
+            if registry == 'rubygems':
+                return self._fetch_rubygems(package_name, timeout)
+            if registry == 'crates':
+                return self._fetch_crates(package_name, timeout)
+            if registry == 'nuget':
+                return self._fetch_nuget(package_name, timeout)
+            if registry == 'packagist':
+                return self._fetch_packagist(package_name, timeout)
+            logger.info("No download fetcher implemented for registry %r", registry)
+            return None
+        except requests.RequestException as e:
+            logger.error("Download count error [%s/%s]: %s", registry, package_name, e)
+            return None
+
+    def _fetch_npm(self, package: str, timeout: int) -> dict:
+        """Weekly downloads from the npm registry API."""
+        resp = requests.get(
+            f"https://api.npmjs.org/downloads/point/last-week/{package}",
+            timeout=timeout
+        )
+        resp.raise_for_status()
+        return {
+            'weekly_downloads': int(resp.json().get('downloads', 0)),
+            'period': 'weekly',
+            'registry': 'npm',
+        }
+
+    def _fetch_pypi(self, package: str, timeout: int) -> dict:
+        """Weekly downloads from the PyPI stats API."""
+        resp = requests.get(
+            f"https://pypistats.org/api/packages/{package.lower()}/recent",
+            timeout=timeout
+        )
+        resp.raise_for_status()
+        return {
+            'weekly_downloads': int(resp.json().get('data', {}).get('last_week', 0)),
+            'period': 'weekly',
+            'registry': 'pypi',
+        }
+
+    def _fetch_rubygems(self, package: str, timeout: int) -> dict:
+        """Estimated weekly downloads from RubyGems (version total ÷ 52)."""
+        resp = requests.get(
+            f"https://rubygems.org/api/v1/gems/{package}.json",
+            timeout=timeout
+        )
+        resp.raise_for_status()
+        version_total = int(resp.json().get('version_downloads', 0))
+        return {
+            'weekly_downloads': version_total // 52,
+            'period': 'estimated_weekly',
+            'registry': 'rubygems',
+        }
+
+    def _fetch_crates(self, package: str, timeout: int) -> dict:
+        """Estimated weekly downloads from crates.io (90-day count ÷ 13)."""
+        resp = requests.get(
+            f"https://crates.io/api/v1/crates/{package}",
+            headers={'User-Agent': self.config.get('geocoding', {}).get('user_agent',
+                                                                        'OSSPolicyGuard/1.0')},
+            timeout=timeout
+        )
+        resp.raise_for_status()
+        recent = int(resp.json().get('crate', {}).get('recent_downloads', 0) or 0)
+        return {
+            'weekly_downloads': recent // 13,
+            'period': 'estimated_weekly',
+            'registry': 'crates',
+        }
+
+    def _fetch_nuget(self, package: str, timeout: int) -> dict:
+        """Estimated weekly downloads from NuGet (total ÷ 104-week lifetime)."""
+        resp = requests.get(
+            "https://azuresearch-usnc.nuget.org/query",
+            params={'q': f'packageid:{package}', 'take': 1},
+            timeout=timeout
+        )
+        resp.raise_for_status()
+        data = resp.json().get('data', [])
+        total = int(data[0].get('totalDownloads', 0)) if data else 0
+        return {
+            'weekly_downloads': total // 104,  # assume 2-year average lifetime
+            'period': 'estimated_weekly',
+            'registry': 'nuget',
+        }
+
+    def _fetch_packagist(self, package: str, timeout: int) -> dict:
+        """Estimated weekly downloads from Packagist (monthly ÷ 4).
+
+        Requires 'vendor/package' format for package_name.
+        """
+        if '/' not in package:
+            logger.warning(
+                "Packagist requires vendor/package format, got %r — skipping", package
+            )
+            return {'weekly_downloads': 0, 'period': 'unknown', 'registry': 'packagist'}
+        resp = requests.get(
+            f"https://packagist.org/packages/{package}.json",
+            timeout=timeout
+        )
+        resp.raise_for_status()
+        monthly = int(
+            resp.json().get('package', {}).get('downloads', {}).get('monthly', 0) or 0
+        )
+        return {
+            'weekly_downloads': monthly // 4,
+            'period': 'estimated_weekly',
+            'registry': 'packagist',
+        }
+
     def get_scorecard(self, repo_url: str) -> dict | None:
         """Fetch OpenSSF Scorecard security score (0-10) for a GitHub repo.
 
@@ -666,8 +848,25 @@ class OSSWorkflow:
                 if locations:
                     results['contributor_locations'] = locations
 
-        # CVE check
+        # Package registry: download count + CVE check
         if 'package_name' in component_data:
+            # Download count — requires ecosystem or language to resolve registry
+            ecosystem = (
+                component_data.get('ecosystem')
+                or component_data.get('language', '')
+            )
+            if ecosystem:
+                dl_data = self.scorer.get_download_count(
+                    component_data['package_name'], ecosystem
+                )
+                if dl_data:
+                    results['download_data'] = dl_data
+            else:
+                logger.info(
+                    "No 'ecosystem' or 'language' in component_data — "
+                    "download count skipped for %s", component_data['package_name']
+                )
+
             cve_data = self.scorer.check_cves(component_data['package_name'])
             results['cve_data'] = cve_data
 
@@ -823,16 +1022,49 @@ class OSSWorkflow:
         return round(max(0.0, 100.0 * (1 - penalty)), 1)
 
     def _calculate_community_score(self, results: dict) -> float:
-        """Calculate community/adoption score (0-100) based on star count."""
-        if 'github_metrics' in results:
-            stars = results['github_metrics'].get('stars', 0)
-            if stars > _STARS_HIGH_THRESHOLD:
-                return 100
-            if stars > _STARS_MED_THRESHOLD:
-                return 80
-            if stars > _STARS_LOW_THRESHOLD:
-                return 60
-        return 40
+        """Calculate community/adoption score (0-100).
+
+        Blends two signals when both are available:
+          - Weekly download count from the package registry (primary, 70%)
+          - GitHub star count                              (secondary, 30%)
+
+        Falls back to whichever signal is available; returns 40 when neither
+        is present (unknown — penalised but not zeroed).
+        """
+        comm = self.config.get('scoring', {}).get('community', {})
+        wh = comm.get('weekly_high', _STARS_HIGH_THRESHOLD * 100)
+        wm = comm.get('weekly_med',  _STARS_MED_THRESHOLD * 100)
+        wl = comm.get('weekly_low',  _STARS_LOW_THRESHOLD * 100)
+        dl_w  = comm.get('download_weight', 0.7)
+        star_w = comm.get('star_weight', 0.3)
+
+        def _dl_score(weekly: int) -> float:
+            if weekly > wh: return 100.0
+            if weekly > wm: return 80.0
+            if weekly > wl: return 60.0
+            return 40.0
+
+        def _star_score(stars: int) -> float:
+            if stars > _STARS_HIGH_THRESHOLD: return 100.0
+            if stars > _STARS_MED_THRESHOLD:  return 80.0
+            if stars > _STARS_LOW_THRESHOLD:  return 60.0
+            return 40.0
+
+        has_dl   = 'download_data' in results
+        has_star = 'github_metrics' in results
+
+        if has_dl and has_star:
+            dl   = _dl_score(results['download_data']['weekly_downloads'])
+            star = _star_score(results['github_metrics'].get('stars', 0))
+            return round(dl_w * dl + star_w * star, 1)
+
+        if has_dl:
+            return _dl_score(results['download_data']['weekly_downloads'])
+
+        if has_star:
+            return _star_score(results['github_metrics'].get('stars', 0))
+
+        return 40.0  # no data — penalised but not zero
 
     def _determine_approval(self, score: float, criticality: str) -> str:
         t = self.config['scoring']['thresholds']

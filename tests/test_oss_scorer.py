@@ -16,12 +16,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # Fixtures & helpers
 # ---------------------------------------------------------------------------
 
+_REGISTRY_CFG = {
+    'npm':       {'enabled': True, 'timeout': 5, 'languages': ['javascript', 'typescript', 'nodejs', 'node']},
+    'pypi':      {'enabled': True, 'timeout': 5, 'languages': ['python']},
+    'rubygems':  {'enabled': True, 'timeout': 5, 'languages': ['ruby']},
+    'crates':    {'enabled': True, 'timeout': 5, 'languages': ['rust']},
+    'nuget':     {'enabled': True, 'timeout': 5, 'languages': ['csharp', 'c#', 'dotnet']},
+    'packagist': {'enabled': True, 'timeout': 5, 'languages': ['php']},
+    'maven':     {'enabled': False, 'timeout': 5, 'languages': ['java', 'kotlin']},
+}
+
 MINIMAL_CONFIG = {
     'nvd': {'api_key': '', 'rate_limit': 100},  # high rate limit so tests don't sleep
     'github': {'token': '', 'timeout': 5},
     'scoring': {
         'weights': {'activity': 30, 'trust': 20, 'security': 35, 'community': 15},
         'thresholds': {'critical': 90, 'high': 80, 'medium': 70, 'low': 60},
+        'community': {
+            'weekly_high': 1_000_000,
+            'weekly_med': 100_000,
+            'weekly_low': 10_000,
+            'download_weight': 0.7,
+            'star_weight': 0.3,
+        },
     },
     'risk': {
         'high_risk_countries': ['CN', 'RU'],
@@ -31,6 +48,12 @@ MINIMAL_CONFIG = {
             'verified_individual': 1.2,
             'anonymous': 1.5,
         },
+    },
+    'registries': _REGISTRY_CFG,
+    'geocoding': {
+        'enabled': True, 'max_contributors': 10,
+        'nominatim_url': 'https://nominatim.openstreetmap.org',
+        'user_agent': 'test/1.0',
     },
 }
 
@@ -928,3 +951,193 @@ class TestGetContributorLocations:
         scorer = _make_scorer(cfg)
         result = scorer.get_contributor_locations('https://api.github.com/repos/x/y/contributors')
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# OSSScorer._resolve_registry tests
+# ---------------------------------------------------------------------------
+
+class TestResolveRegistry:
+    def test_direct_registry_name_npm(self):
+        assert _make_scorer()._resolve_registry('npm') == 'npm'
+
+    def test_direct_registry_name_pypi(self):
+        assert _make_scorer()._resolve_registry('pypi') == 'pypi'
+
+    def test_language_alias_python_resolves_pypi(self):
+        assert _make_scorer()._resolve_registry('python') == 'pypi'
+
+    def test_language_alias_javascript_resolves_npm(self):
+        assert _make_scorer()._resolve_registry('javascript') == 'npm'
+
+    def test_language_alias_typescript_resolves_npm(self):
+        assert _make_scorer()._resolve_registry('typescript') == 'npm'
+
+    def test_language_alias_rust_resolves_crates(self):
+        assert _make_scorer()._resolve_registry('rust') == 'crates'
+
+    def test_language_alias_csharp_resolves_nuget(self):
+        assert _make_scorer()._resolve_registry('csharp') == 'nuget'
+
+    def test_language_alias_php_resolves_packagist(self):
+        assert _make_scorer()._resolve_registry('php') == 'packagist'
+
+    def test_case_insensitive(self):
+        assert _make_scorer()._resolve_registry('PYTHON') == 'pypi'
+        assert _make_scorer()._resolve_registry('JavaScript') == 'npm'
+
+    def test_unknown_ecosystem_returns_none(self):
+        assert _make_scorer()._resolve_registry('cobol') is None
+
+    def test_disabled_registry_returns_none(self):
+        # maven is disabled in MINIMAL_CONFIG
+        assert _make_scorer()._resolve_registry('java') is None
+        assert _make_scorer()._resolve_registry('maven') is None
+
+
+# ---------------------------------------------------------------------------
+# OSSScorer.get_download_count — per-registry fetcher tests
+# ---------------------------------------------------------------------------
+
+class TestGetDownloadCount:
+    @patch('oss_scorer.requests.get')
+    def test_npm_extracts_downloads(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.raise_for_status = MagicMock()
+        mock_get.return_value.json.return_value = {'downloads': 5_000_000}
+
+        result = _make_scorer().get_download_count('lodash', 'npm')
+
+        assert result['weekly_downloads'] == 5_000_000
+        assert result['period'] == 'weekly'
+        assert result['registry'] == 'npm'
+
+    @patch('oss_scorer.requests.get')
+    def test_pypi_extracts_last_week(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.raise_for_status = MagicMock()
+        mock_get.return_value.json.return_value = {
+            'data': {'last_week': 12_000_000, 'last_month': 48_000_000}
+        }
+
+        result = _make_scorer().get_download_count('requests', 'python')
+
+        assert result['weekly_downloads'] == 12_000_000
+        assert result['registry'] == 'pypi'
+
+    @patch('oss_scorer.requests.get')
+    def test_rubygems_estimates_weekly(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.raise_for_status = MagicMock()
+        mock_get.return_value.json.return_value = {'version_downloads': 520_000}
+
+        result = _make_scorer().get_download_count('rails', 'ruby')
+
+        # 520_000 // 52 = 10_000
+        assert result['weekly_downloads'] == 10_000
+        assert result['period'] == 'estimated_weekly'
+        assert result['registry'] == 'rubygems'
+
+    @patch('oss_scorer.requests.get')
+    def test_crates_divides_90day_by_13(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.raise_for_status = MagicMock()
+        mock_get.return_value.json.return_value = {
+            'crate': {'recent_downloads': 130_000}
+        }
+
+        result = _make_scorer().get_download_count('serde', 'rust')
+
+        assert result['weekly_downloads'] == 10_000  # 130_000 // 13
+        assert result['registry'] == 'crates'
+
+    @patch('oss_scorer.requests.get')
+    def test_nuget_divides_total_by_104(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.raise_for_status = MagicMock()
+        mock_get.return_value.json.return_value = {
+            'data': [{'totalDownloads': 10_400_000}]
+        }
+
+        result = _make_scorer().get_download_count('Newtonsoft.Json', 'csharp')
+
+        assert result['weekly_downloads'] == 100_000  # 10_400_000 // 104
+        assert result['registry'] == 'nuget'
+
+    @patch('oss_scorer.requests.get')
+    def test_packagist_divides_monthly_by_4(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.raise_for_status = MagicMock()
+        mock_get.return_value.json.return_value = {
+            'package': {'downloads': {'monthly': 400_000}}
+        }
+
+        result = _make_scorer().get_download_count('laravel/framework', 'php')
+
+        assert result['weekly_downloads'] == 100_000  # 400_000 // 4
+        assert result['registry'] == 'packagist'
+
+    def test_packagist_without_vendor_slash_returns_zero(self):
+        result = _make_scorer().get_download_count('laravel', 'php')
+        assert result['weekly_downloads'] == 0
+
+    def test_unknown_ecosystem_returns_none(self):
+        result = _make_scorer().get_download_count('mylib', 'cobol')
+        assert result is None
+
+    def test_disabled_registry_returns_none(self):
+        result = _make_scorer().get_download_count('mylib', 'java')
+        assert result is None
+
+    @patch('oss_scorer.requests.get')
+    def test_network_error_returns_none(self, mock_get):
+        mock_get.side_effect = requests_exception()
+        result = _make_scorer().get_download_count('requests', 'python')
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# OSSWorkflow._calculate_community_score — with download data
+# ---------------------------------------------------------------------------
+
+class TestCalculateCommunityScoreWithDownloads:
+    def _results(self, weekly=None, stars=None):
+        r = {}
+        if weekly is not None:
+            r['download_data'] = {'weekly_downloads': weekly, 'period': 'weekly', 'registry': 'npm'}
+        if stars is not None:
+            r['github_metrics'] = {'stars': stars}
+        return r
+
+    def test_high_downloads_and_high_stars_scores_100(self):
+        # dl=100, star=100 → 0.7*100 + 0.3*100 = 100
+        wf = _make_workflow()
+        assert wf._calculate_community_score(self._results(2_000_000, 20_000)) == 100.0
+
+    def test_downloads_dominate_over_low_stars(self):
+        # dl=100 (>1M), star=40 (<100 stars) → 0.7*100 + 0.3*40 = 70+12 = 82
+        wf = _make_workflow()
+        assert wf._calculate_community_score(self._results(2_000_000, 50)) == 82.0
+
+    def test_medium_downloads_medium_stars(self):
+        # dl=80 (>100K), star=80 (>1K) → 0.7*80 + 0.3*80 = 80
+        wf = _make_workflow()
+        assert wf._calculate_community_score(self._results(500_000, 5_000)) == 80.0
+
+    def test_downloads_only_no_stars(self):
+        # only download data — returns download score directly
+        wf = _make_workflow()
+        assert wf._calculate_community_score(self._results(weekly=200_000)) == 80.0
+
+    def test_stars_only_no_downloads(self):
+        # only star data — returns star score directly (unchanged behaviour)
+        wf = _make_workflow()
+        assert wf._calculate_community_score(self._results(stars=15_000)) == 100.0
+
+    def test_no_data_returns_40(self):
+        wf = _make_workflow()
+        assert wf._calculate_community_score({}) == 40.0
+
+    def test_low_downloads_below_threshold_scores_40(self):
+        wf = _make_workflow()
+        assert wf._calculate_community_score(self._results(weekly=500)) == 40.0

@@ -18,6 +18,15 @@ scoring:
     high: 80
     medium: 70
     low: 60
+  # Community score blends download count (primary) with star count (secondary).
+  # weekly_high/med/low are the weekly download thresholds that map to 100/80/60.
+  community:
+    weekly_high: 1_000_000   # > 1 M/week  → score 100
+    weekly_med:    100_000   # > 100 K/week → score 80
+    weekly_low:     10_000   # > 10 K/week  → score 60
+                             # ≤ 10 K/week  → score 40
+    download_weight: 0.7     # when both downloads AND stars available
+    star_weight: 0.3
 
 risk:
   high_risk_countries: ["CN", "RU", "IR", "KP", "SY"]
@@ -27,28 +36,74 @@ risk:
     verified_individual: 1.2
     anonymous: 1.5
 
-# EPSS (Exploit Prediction Scoring System) — enriches each CVE with its
-# probability of being exploited in the wild (0-1 score from FIRST.org).
-# No API key required.  Deduction thresholds mirror _EPSS_*_THRESHOLD constants.
+# ── Package Registries ────────────────────────────────────────────────────────
+# Each key is the canonical registry name and also the value to pass as
+# 'ecosystem' in component_data.
+#
+# 'languages' lists aliases that auto-resolve to this registry, so callers can
+# pass either the ecosystem name ('npm') or the language ('javascript').
+#
+# Set enabled: false to skip download-count lookups for a registry without
+# removing its configuration.
+registries:
+  npm:
+    enabled: true
+    timeout: 10
+    languages: [javascript, typescript, nodejs, node]
+
+  pypi:
+    enabled: true
+    timeout: 10
+    languages: [python]
+
+  rubygems:
+    enabled: true
+    timeout: 10
+    languages: [ruby]
+    # RubyGems has no public weekly API; the fetcher estimates from the
+    # cumulative version download count divided by 52.
+
+  crates:
+    enabled: true
+    timeout: 10
+    languages: [rust]
+    # crates.io 'recent_downloads' covers 90 days; the fetcher divides by 13
+    # to produce a weekly estimate.
+
+  nuget:
+    enabled: true
+    timeout: 10
+    languages: [csharp, "c#", dotnet]
+    # NuGet exposes only total downloads; the fetcher estimates weekly by
+    # dividing by a two-year assumed lifetime (104 weeks).
+
+  packagist:
+    enabled: true
+    timeout: 10
+    languages: [php]
+    # Packagist requires 'vendor/package' format for the package_name field.
+    # Monthly download counts are divided by 4 for a weekly estimate.
+
+  maven:
+    enabled: false          # Maven Central has no public download-count API.
+    timeout: 10
+    languages: [java, kotlin, scala, groovy]
+
+# ── EPSS ─────────────────────────────────────────────────────────────────────
 epss:
   enabled: true
-  timeout: 10          # seconds per batch request
-  high_threshold: 0.5  # ≥ this → actively weaponised   → -15 pts per CVE
-  med_threshold: 0.1   # ≥ this → moderate risk          → -8 pts per CVE
-                       # < med  → theoretical            → -2 pts per CVE
+  timeout: 10
+  high_threshold: 0.5
+  med_threshold: 0.1
 
-# OpenSSF Scorecard — fetches a 0-10 security posture score for GitHub repos.
-# Set enabled: false to skip this API call.
+# ── OpenSSF Scorecard ─────────────────────────────────────────────────────────
 scorecard:
   enabled: true
-  timeout: 10  # seconds
+  timeout: 10
 
-# Contributor geolocation — resolves maintainer locations to country codes and
-# applies geo-political risk weighting to the trust score.
-# Nominatim (OpenStreetMap) is used as a free fallback geocoder; set a
-# descriptive user_agent so OSM can contact you if needed.
+# ── Contributor Geolocation ───────────────────────────────────────────────────
 geocoding:
   enabled: true
-  max_contributors: 10        # number of top contributors to analyse
+  max_contributors: 10
   nominatim_url: "https://nominatim.openstreetmap.org"
   user_agent: "OSSPolicyGuard/1.0 (opensource-policy-guard)"
