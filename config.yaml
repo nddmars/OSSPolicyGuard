@@ -29,7 +29,13 @@ scoring:
     star_weight: 0.3
 
 risk:
+  # Geography is never part of the default security score. Use the optional
+  # geo_compliance rule only for explicit jurisdictional reviews.
   high_risk_countries: ["CN", "RU", "IR", "KP", "SY"]
+  geo_compliance:
+    enabled: false
+    label: "Organization compliance"
+    high_risk_countries: ["CN", "RU", "IR", "KP", "SY"]
   critical_apps: ["payment", "auth", "database"]
   maintainer_risk_multipliers:
     corporate: 1.0

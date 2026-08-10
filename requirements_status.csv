@@ -1,0 +1,10 @@
+id,requirement,status,notes,file,updated_at
+REQ-001,Public product contract,In Progress,README updated with CLI-first workflow and scope language,README.md,2026-08-05
+REQ-002,Safe signal policy,Done,Default scoring remains neutral; optional jurisdiction rule is explicitly opt-in and labeled as compliance,oss_scorer.py,2026-08-10
+REQ-010,Maintainable package layout,In Progress,Package entry point added; full provider refactor remains,src/osspolicyguard/cli.py,2026-08-05
+REQ-011,Installable package and CLI entry point,Done,pyproject entry point and installable package verified,pyproject.toml,2026-08-05
+REQ-012,Quality automation,In Progress,GitHub Actions workflow present; lint/type checks documented but not all CI gates finalized,.github/workflows/tests.yml,2026-08-05
+REQ-020,Package scan command,In Progress,CLI scan and JSON output implemented; advanced options still pending,src/osspolicyguard/cli.py,2026-08-05
+REQ-021,Exit-code contract,Done,Decision/exit-code matrix implemented and verified,tests/test_cli.py,2026-08-06
+REQ-022,Versioned JSON schema,Done,Schema version, schema file, and JSON schema validation tests completed,tests/test_reports.py,2026-08-06
+REQ-030,Provider interface and resilience,In Progress,Provider contract work started with GitHub and Scorecard providers,oss_scorer.py,2026-08-06

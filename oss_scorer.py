@@ -1,22 +1,286 @@
+import json
 import os
 import time
 import logging
 import yaml
 import pandas as pd
 import requests
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
+from enum import Enum
+from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 import matplotlib.pyplot as plt
 from ipywidgets import interact, Dropdown
 import ipywidgets as widgets
 from IPython.display import display, Markdown
-from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(name)s %(levelname)s %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+class ProviderStatus(str, Enum):
+    SUCCESS = "success"
+    TIMEOUT = "timeout"
+    RATE_LIMIT = "rate_limit"
+    MALFORMED = "malformed"
+    NETWORK_ERROR = "network_error"
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class ProviderError:
+    provider: str
+    status: ProviderStatus
+    message: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "status": self.status.value,
+            "message": self.message,
+            "details": self.details,
+        }
+
+
+@dataclass
+class ProviderResponse:
+    provider: str
+    status: ProviderStatus
+    fetched_at: str
+    data: dict[str, Any] = field(default_factory=dict)
+    error: ProviderError | None = None
+
+    def is_success(self) -> bool:
+        return self.status == ProviderStatus.SUCCESS
+
+
+class SimpleCache:
+    def __init__(self) -> None:
+        self._store: dict[str, tuple[ProviderResponse, float]] = {}
+
+    def get(self, key: str) -> ProviderResponse | None:
+        entry = self._store.get(key)
+        if not entry:
+            return None
+        response, expires_at = entry
+        if time.monotonic() < expires_at:
+            return response
+        self._store.pop(key, None)
+        return None
+
+    def set(self, key: str, response: ProviderResponse, ttl: float) -> None:
+        self._store[key] = (response, time.monotonic() + ttl)
+
+
+class ProviderBase:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        provider: str,
+        timeout_key: str | None = None,
+        token_key: str | None = None,
+        rate_limit: float = 1.0,
+        cache_ttl: float = 60.0,
+    ) -> None:
+        self.config = config
+        self.name = provider
+        self.timeout_key = timeout_key
+        self.token_key = token_key
+        self.rate_limit = rate_limit
+        self.cache_ttl = cache_ttl
+        self.cache = SimpleCache()
+        self._last_request_time = 0.0
+
+    @property
+    def timeout(self) -> int:
+        if self.timeout_key:
+            return int(self.config.get(self.timeout_key, {}).get("timeout", 10))
+        return 10
+
+    def _build_headers(self, service: str | None = None) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if self.token_key and self.config.get(self.token_key, {}).get("token"):
+            headers["Authorization"] = f'token {self.config[self.token_key]["token"]}'
+        if service == "scorecard":
+            headers["Accept"] = "application/json"
+        return headers
+
+    def _build_cache_key(self, url: str, params: dict[str, Any] | None) -> str:
+        return f"{url}?{json.dumps(params or {}, sort_keys=True, default=str)}"
+
+    def _sleep_rate_limit(self) -> None:
+        min_interval = 1.0 / max(1.0, self.rate_limit)
+        elapsed = time.monotonic() - self._last_request_time
+        if elapsed < min_interval:
+            time.sleep(min_interval - elapsed)
+        self._last_request_time = time.monotonic()
+
+    def _get(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: int | None = None,
+        retries: int = 2,
+        backoff_factor: float = 0.5,
+    ) -> ProviderResponse:
+        cache_key = self._build_cache_key(url, params)
+        cached = self.cache.get(cache_key)
+        if cached:
+            return cached
+
+        headers = headers or {}
+        timeout = timeout or self.timeout
+        attempt = 0
+        while attempt <= retries:
+            self._sleep_rate_limit()
+            try:
+                response = requests.get(url, params=params, headers=headers, timeout=timeout)
+                response.raise_for_status()
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    error = ProviderError(
+                        self.name,
+                        ProviderStatus.MALFORMED,
+                        f"Invalid JSON response from {url}",
+                        {"exception": str(exc)},
+                    )
+                    return ProviderResponse(
+                        self.name,
+                        ProviderStatus.MALFORMED,
+                        datetime.now(timezone.utc).isoformat(),
+                        error=error,
+                    )
+
+                result = ProviderResponse(
+                    self.name,
+                    ProviderStatus.SUCCESS,
+                    datetime.now(timezone.utc).isoformat(),
+                    data=payload,
+                )
+                self.cache.set(cache_key, result, self.cache_ttl)
+                return result
+            except requests.HTTPError as exc:
+                status = ProviderStatus.RATE_LIMIT if exc.response is not None and exc.response.status_code == 429 else ProviderStatus.NETWORK_ERROR
+                message = f"HTTP error {exc.response.status_code if exc.response else 'unknown'} for {url}"
+            except requests.Timeout as exc:
+                status = ProviderStatus.TIMEOUT
+                message = f"Request timeout for {url}: {exc}"
+            except requests.RequestException as exc:
+                status = ProviderStatus.NETWORK_ERROR
+                message = f"Network error for {url}: {exc}"
+            except Exception as exc:  # pragma: no cover
+                status = ProviderStatus.UNKNOWN
+                message = f"Unexpected error for {url}: {exc}"
+            attempt += 1
+            if attempt > retries:
+                error = ProviderError(self.name, status, message, {"attempts": attempt})
+                return ProviderResponse(
+                    self.name,
+                    status,
+                    datetime.now(timezone.utc).isoformat(),
+                    error=error,
+                )
+            time.sleep(backoff_factor * (2 ** (attempt - 1)))
+
+    def fetch(self, *args: Any, **kwargs: Any) -> ProviderResponse:
+        raise NotImplementedError("Providers must implement fetch()")
+
+
+class GitHubProvider(ProviderBase):
+    def __init__(self, config: dict[str, Any]) -> None:
+        super().__init__(config, "github", timeout_key="github", token_key="github", rate_limit=float(config.get("github", {}).get("rate_limit", 1)), cache_ttl=60.0)
+
+    def _parse_github_owner_repo(self, url: str) -> tuple[str, str]:
+        parsed = urlparse(url.rstrip("/"))
+        if parsed.netloc not in ("github.com", "www.github.com"):
+            raise ValueError(f"Not a GitHub URL: {url!r}")
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) < 2:
+            raise ValueError(f"Cannot extract owner/repo from URL: {url!r}")
+        repo_name = parts[-1]
+        if repo_name.endswith('.git'):
+            repo_name = repo_name[:-4]
+        return parts[-2], repo_name
+
+    def fetch(self, repo_url: str) -> ProviderResponse:
+        try:
+            owner, repo = self._parse_github_owner_repo(repo_url)
+        except ValueError as exc:
+            return ProviderResponse(
+                self.name,
+                ProviderStatus.UNKNOWN,
+                datetime.now(timezone.utc).isoformat(),
+                error=ProviderError(self.name, ProviderStatus.UNKNOWN, str(exc)),
+            )
+
+        response = self._get(
+            f"https://api.github.com/repos/{owner}/{repo}",
+            headers=self._build_headers("github"),
+        )
+        if not response.is_success():
+            return response
+
+        body = response.data
+        normalized = {
+            'stars': body.get('stargazers_count', 0),
+            'forks': body.get('forks_count', 0),
+            'last_commit': body.get('pushed_at', ''),
+            'open_issues': body.get('open_issues_count', 0),
+            'contributors_url': body.get('contributors_url', ''),
+        }
+        return ProviderResponse(self.name, ProviderStatus.SUCCESS, response.fetched_at, data=normalized)
+
+
+class ScorecardProvider(ProviderBase):
+    def __init__(self, config: dict[str, Any]) -> None:
+        super().__init__(config, "scorecard", timeout_key="scorecard", rate_limit=1.0, cache_ttl=300.0)
+
+    def _parse_github_owner_repo(self, url: str) -> tuple[str, str]:
+        parsed = urlparse(url.rstrip("/"))
+        if parsed.netloc not in ("github.com", "www.github.com"):
+            raise ValueError(f"Not a GitHub URL: {url!r}")
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) < 2:
+            raise ValueError(f"Cannot extract owner/repo from URL: {url!r}")
+        repo_name = parts[-1]
+        if repo_name.endswith('.git'):
+            repo_name = repo_name[:-4]
+        return parts[-2], repo_name
+
+    def fetch(self, repo_url: str) -> ProviderResponse:
+        try:
+            owner, repo = self._parse_github_owner_repo(repo_url)
+        except ValueError as exc:
+            return ProviderResponse(
+                self.name,
+                ProviderStatus.UNKNOWN,
+                datetime.now(timezone.utc).isoformat(),
+                error=ProviderError(self.name, ProviderStatus.UNKNOWN, str(exc)),
+            )
+
+        response = self._get(
+            f"https://api.securityscorecards.dev/projects/github.com/{owner}/{repo}",
+            headers=self._build_headers("scorecard"),
+        )
+        if not response.is_success():
+            return response
+
+        body = response.data
+        normalized = {
+            'score': float(body.get('score', 0)),
+            'date': body.get('date', ''),
+            'checks': {c.get('name', ''): c.get('score', -1) for c in body.get('checks', [])},
+        }
+        return ProviderResponse(self.name, ProviderStatus.SUCCESS, response.fetched_at, data=normalized)
+
 
 # Scoring constants
 _STARS_HIGH_THRESHOLD = 10_000
@@ -209,6 +473,8 @@ class OSSScorer:
     def __init__(self):
         self.config = OSSConfig().config
         self._last_request_time: float = 0.0
+        self.github_provider = GitHubProvider(self.config)
+        self.scorecard_provider = ScorecardProvider(self.config)
         self.framework = self.create_oss_framework()
         self.proprietary = self.create_proprietary_additions()
 
@@ -311,33 +577,19 @@ class OSSScorer:
         return requests.get(url, headers=headers, timeout=timeout)
 
     def get_github_metrics(self, repo_url: str) -> dict | None:
-        """Fetch live GitHub metrics using API"""
-        try:
-            owner, repo = self._parse_github_owner_repo(repo_url)
-        except ValueError as exc:
-            logger.error("Invalid repo URL: %s", exc)
-            return None
-
-        try:
-            headers = self._build_headers('github')
-            response = self._rate_limited_get(
-                f'https://api.github.com/repos/{owner}/{repo}',
-                headers=headers,
-                timeout=self.config['github']['timeout']
-            )
-            response.raise_for_status()
-            repo_data = response.json()
-
+        """Fetch live GitHub metrics using the provider contract."""
+        response = self.github_provider.fetch(repo_url)
+        if response.is_success():
             return {
-                'stars': repo_data.get('stargazers_count', 0),
-                'forks': repo_data.get('forks_count', 0),
-                'last_commit': repo_data.get('pushed_at', ''),
-                'open_issues': repo_data.get('open_issues_count', 0),
-                'contributors_url': repo_data.get('contributors_url', '')
+                'status': response.status.value,
+                'fetched_at': response.fetched_at,
+                **response.data,
             }
-        except requests.RequestException as e:
-            logger.error("GitHub API error for %s: %s", repo_url, e)
-            return None
+        return {
+            'status': response.status.value,
+            'fetched_at': response.fetched_at,
+            'error': response.error.to_dict() if response.error else None,
+        }
 
     def check_cves(self, package_name: str, ecosystem: str = "npm") -> dict:
         """Query NVD v2 API for CVEs then enrich each one with an EPSS score.
@@ -353,7 +605,7 @@ class OSSScorer:
         }
 
         try:
-            since = (datetime.utcnow() - timedelta(days=_CVE_LOOKBACK_DAYS)).strftime(
+            since = (datetime.now(timezone.utc) - timedelta(days=_CVE_LOOKBACK_DAYS)).strftime(
                 '%Y-%m-%dT00:00:00.000'
             )
             response = self._rate_limited_get(
@@ -731,41 +983,19 @@ class OSSScorer:
         }
 
     def get_scorecard(self, repo_url: str) -> dict | None:
-        """Fetch OpenSSF Scorecard security score (0-10) for a GitHub repo.
-
-        Returns a dict with 'score' (float 0-10), 'date', and 'checks' (name→score map),
-        or None if the repo is not indexed or the request fails.
-        """
-        try:
-            owner, repo = self._parse_github_owner_repo(repo_url)
-        except ValueError as exc:
-            logger.error("Invalid repo URL for scorecard lookup: %s", exc)
-            return None
-
-        try:
-            url = f"https://api.securityscorecards.dev/projects/github.com/{owner}/{repo}"
-            response = requests.get(
-                url,
-                timeout=self.config.get('scorecard', {}).get('timeout', 10)
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    'score': float(data.get('score', 0)),
-                    'date': data.get('date', ''),
-                    'checks': {
-                        c['name']: c.get('score', -1)
-                        for c in data.get('checks', [])
-                    }
-                }
-            if response.status_code == 404:
-                logger.info("Scorecard not available for %s/%s (not indexed)", owner, repo)
-            else:
-                logger.warning("Scorecard API returned %s for %s/%s", response.status_code, owner, repo)
-            return None
-        except requests.RequestException as e:
-            logger.error("Scorecard API error for %s: %s", repo_url, e)
-            return None
+        """Fetch OpenSSF Scorecard security score using the provider contract."""
+        response = self.scorecard_provider.fetch(repo_url)
+        if response.is_success():
+            return {
+                'status': response.status.value,
+                'fetched_at': response.fetched_at,
+                **response.data,
+            }
+        return {
+            'status': response.status.value,
+            'fetched_at': response.fetched_at,
+            'error': response.error.to_dict() if response.error else None,
+        }
 
     def _geocode_location(self, location_str: str) -> str:
         """Convert a free-text location string to an ISO-3166-1 alpha-2 country code.
@@ -1053,7 +1283,9 @@ class OSSWorkflow:
             return 40
         try:
             last_commit = datetime.fromisoformat(last_commit_str.rstrip('Z'))
-            days_stale = (datetime.utcnow() - last_commit).days
+            if last_commit.tzinfo is None:
+                last_commit = last_commit.replace(tzinfo=timezone.utc)
+            days_stale = (datetime.now(timezone.utc) - last_commit).days
         except ValueError:
             return 40
         if days_stale < 7:
@@ -1124,8 +1356,8 @@ class OSSWorkflow:
 
         Blends two sub-dimensions:
         - Project maturity (60%) — based on fork count as a community proxy
-        - Geopolitical risk (40%) — based on geocoded contributor locations;
-          neutral (50) when location data is unavailable
+        - Optional compliance geo-risk (40%) — only when a jurisdiction policy is
+          explicitly enabled; otherwise this component stays neutral.
         """
         # Maturity sub-score
         forks = (results.get('github_metrics') or {}).get('forks', 0)
@@ -1140,27 +1372,30 @@ class OSSWorkflow:
         else:
             maturity = 50.0  # no data at all — neutral
 
-        # Geo-risk sub-score
-        if 'contributor_locations' in results:
+        # Geography is not used as a default maliciousness signal. Only a
+        # separately-configured compliance rule may apply a jurisdiction penalty.
+        geo_cfg = self.config.get('risk', {}).get('geo_compliance', {})
+        if 'contributor_locations' in results and geo_cfg.get('enabled', False):
             geo = self._calculate_geo_risk_score(results['contributor_locations'])
         else:
-            geo = 50.0  # unknown — neutral
+            geo = 50.0  # unknown or explicitly neutral — no default penalty
 
         return round(0.6 * maturity + 0.4 * geo, 1)
 
     def _calculate_geo_risk_score(self, contributors: list[dict]) -> float:
-        """Score geopolitical risk from geocoded contributors (0=all high-risk, 100=all safe).
+        """Score optional compliance risk from geocoded contributors.
 
-        Weights each contributor by their commit count.  Contributors whose location
-        resolves to a high-risk country drive the score down sharply; unknown
-        locations apply a lighter 20% penalty to account for the ambiguity.
+        This is intentionally not part of the default security signal. It is only
+        active when the caller opts into an explicit geo/compliance rule.
         """
-        if not contributors:
-            return 50.0  # unknown — neutral
+        geo_cfg = self.config.get('risk', {}).get('geo_compliance', {})
+        if not geo_cfg.get('enabled', False):
+            return 50.0
 
-        high_risk_countries = set(
-            self.config.get('risk', {}).get('high_risk_countries', [])
-        )
+        if not contributors:
+            return 50.0
+
+        high_risk_countries = set(geo_cfg.get('high_risk_countries', []))
 
         total_commits = sum(c.get('contributions', 0) for c in contributors)
         if total_commits == 0:
@@ -1178,7 +1413,6 @@ class OSSWorkflow:
 
         high_risk_frac = high_risk_commits / total_commits
         unknown_frac = unknown_commits / total_commits
-        # Unknown contributors apply a light 20% penalty; confirmed high-risk is full weight
         penalty = high_risk_frac + 0.2 * unknown_frac
         return round(max(0.0, 100.0 * (1 - penalty)), 1)
 

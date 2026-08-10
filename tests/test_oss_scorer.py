@@ -6,6 +6,7 @@ Run with: pytest tests/test_oss_scorer.py -v
 import os
 import sys
 import pytest
+import requests
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta, timezone
 
@@ -66,10 +67,14 @@ MINIMAL_CONFIG = {
 
 def _make_scorer(config=None):
     """Build an OSSScorer instance that bypasses config file loading."""
-    from oss_scorer import OSSScorer
+    from oss_scorer import OSSScorer, GitHubProvider, ScorecardProvider
     scorer = OSSScorer.__new__(OSSScorer)
     scorer.config = config or MINIMAL_CONFIG
     scorer._last_request_time = 0.0
+    scorer.github_provider = GitHubProvider(scorer.config)
+    scorer.scorecard_provider = ScorecardProvider(scorer.config)
+    scorer.framework = scorer.create_oss_framework()
+    scorer.proprietary = scorer.create_proprietary_additions()
     return scorer
 
 
@@ -225,27 +230,38 @@ class TestGetGitHubMetrics:
         scorer = _make_scorer()
         result = scorer.get_github_metrics("https://github.com/expressjs/express")
 
+        assert result['status'] == 'success'
         assert result['stars'] == 5000
         assert result['forks'] == 300
         assert result['open_issues'] == 42
+        assert 'fetched_at' in result
 
     @patch('oss_scorer.requests.get')
-    def test_network_error_returns_none(self, mock_get):
+    def test_network_error_returns_provider_error(self, mock_get):
         mock_get.side_effect = requests_exception()
 
         scorer = _make_scorer()
         result = scorer.get_github_metrics("https://github.com/owner/repo")
-        assert result is None
 
-    def test_invalid_url_returns_none(self):
+        assert result['status'] == 'network_error'
+        assert result['error']['provider'] == 'github'
+        assert 'Network error' in result['error']['message']
+
+    def test_invalid_url_returns_provider_error(self):
         scorer = _make_scorer()
         result = scorer.get_github_metrics("not-a-url")
-        assert result is None
 
-    def test_non_github_url_returns_none(self):
+        assert result['status'] == 'unknown'
+        assert result['error']['provider'] == 'github'
+        assert 'Not a GitHub URL' in result['error']['message']
+
+    def test_non_github_url_returns_provider_error(self):
         scorer = _make_scorer()
         result = scorer.get_github_metrics("https://gitlab.com/owner/repo")
-        assert result is None
+
+        assert result['status'] == 'unknown'
+        assert result['error']['provider'] == 'github'
+        assert 'Not a GitHub URL' in result['error']['message']
 
 
 def requests_exception():
@@ -474,7 +490,7 @@ class TestCalculateSecurityScore:
 
 class TestCalculateActivityScore:
     def _results_with_commit(self, days_ago: int) -> dict:
-        dt = (datetime.utcnow() - timedelta(days=days_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        dt = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')
         return {'github_metrics': {'last_commit': dt}}
 
     def test_recent_commit_scores_100(self):
@@ -694,29 +710,44 @@ class TestGetScorecard:
         scorer = _make_scorer()
         result = scorer.get_scorecard("https://github.com/owner/repo")
 
-        assert result is not None
+        assert result['status'] == 'success'
         assert result['score'] == 7.5
         assert result['date'] == '2024-06-01'
         assert result['checks']['Code-Review'] == 10
         assert result['checks']['Branch-Protection'] == 5
+        assert 'fetched_at' in result
 
     @patch('oss_scorer.requests.get')
-    def test_404_returns_none(self, mock_get):
-        mock_get.return_value.status_code = 404
+    def test_404_returns_provider_error(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = requests.HTTPError(response=mock_response)
+        mock_get.return_value = mock_response
 
         scorer = _make_scorer()
-        assert scorer.get_scorecard("https://github.com/owner/repo") is None
+        result = scorer.get_scorecard("https://github.com/owner/repo")
+
+        assert result['status'] == 'network_error'
+        assert result['error']['provider'] == 'scorecard'
+        assert 'HTTP error 404' in result['error']['message']
 
     @patch('oss_scorer.requests.get')
-    def test_network_error_returns_none(self, mock_get):
+    def test_network_error_returns_provider_error(self, mock_get):
         mock_get.side_effect = requests_exception()
 
         scorer = _make_scorer()
-        assert scorer.get_scorecard("https://github.com/owner/repo") is None
+        result = scorer.get_scorecard("https://github.com/owner/repo")
 
-    def test_invalid_url_returns_none(self):
+        assert result['status'] == 'network_error'
+        assert result['error']['provider'] == 'scorecard'
+
+    def test_invalid_url_returns_provider_error(self):
         scorer = _make_scorer()
-        assert scorer.get_scorecard("not-a-url") is None
+        result = scorer.get_scorecard("not-a-url")
+
+        assert result['status'] == 'unknown'
+        assert result['error']['provider'] == 'scorecard'
+        assert 'Not a GitHub URL' in result['error']['message']
 
 
 # ---------------------------------------------------------------------------
@@ -827,46 +858,22 @@ class TestCalculateGeoRiskScore:
         wf = _make_workflow()
         assert wf._calculate_geo_risk_score([]) == 50.0
 
-    def test_all_safe_countries_scores_100(self):
-        wf = _make_workflow()
-        contributors = [
-            self._contrib('alice', 100, 'US'),
-            self._contrib('bob', 80, 'DE'),
-        ]
-        assert wf._calculate_geo_risk_score(contributors) == 100.0
-
-    def test_all_high_risk_scores_0(self):
+    def test_geo_risk_is_neutral_by_default(self):
         wf = _make_workflow()
         contributors = [
             self._contrib('user1', 200, 'CN'),
             self._contrib('user2', 100, 'RU'),
         ]
-        assert wf._calculate_geo_risk_score(contributors) == 0.0
+        assert wf._calculate_geo_risk_score(contributors) == 50.0
 
-    def test_mixed_risk_weighted_by_commits(self):
-        wf = _make_workflow()
-        # 25% commits from high-risk (CN), 75% from safe (US)
+    def test_geo_compliance_rule_is_explicit_and_opt_in(self):
+        cfg = {**MINIMAL_CONFIG, 'risk': {**MINIMAL_CONFIG['risk'], 'geo_compliance': {'enabled': True, 'high_risk_countries': ['CN', 'RU'], 'label': 'Organization compliance'}}}
+        wf = _make_workflow(cfg)
         contributors = [
-            self._contrib('alice', 75, 'US'),
-            self._contrib('bob', 25, 'CN'),
+            self._contrib('user1', 200, 'CN'),
+            self._contrib('user2', 100, 'US'),
         ]
-        # penalty = 0.25 → score = 100 * (1 - 0.25) = 75
-        assert wf._calculate_geo_risk_score(contributors) == 75.0
-
-    def test_unknown_location_applies_partial_penalty(self):
-        wf = _make_workflow()
-        # 100% unknown → penalty = 0.2*1.0 = 0.2 → score = 80
-        contributors = [self._contrib('anon', 100, '')]
-        assert wf._calculate_geo_risk_score(contributors) == 80.0
-
-    def test_mixed_safe_and_unknown(self):
-        wf = _make_workflow()
-        # 50% US (safe), 50% unknown → penalty = 0.2*0.5 = 0.1 → score = 90
-        contributors = [
-            self._contrib('alice', 50, 'US'),
-            self._contrib('anon', 50, ''),
-        ]
-        assert wf._calculate_geo_risk_score(contributors) == 90.0
+        assert wf._calculate_geo_risk_score(contributors) == 33.3
 
 
 # ---------------------------------------------------------------------------
@@ -879,18 +886,7 @@ class TestTrustScoreBlending:
         # No github_metrics, no contributor_locations → 0.6*50 + 0.4*50 = 50
         assert wf._calculate_trust_score({}) == 50.0
 
-    def test_high_forks_safe_contributors_scores_high(self):
-        wf = _make_workflow()
-        results = {
-            'github_metrics': {'forks': 10000},
-            'contributor_locations': [
-                {'login': 'a', 'contributions': 100, 'country_code': 'US'},
-            ]
-        }
-        # maturity=100, geo=100 → 0.6*100 + 0.4*100 = 100
-        assert wf._calculate_trust_score(results) == 100.0
-
-    def test_high_forks_high_risk_contributors_penalised(self):
+    def test_high_forks_with_country_data_stays_neutral_by_default(self):
         wf = _make_workflow()
         results = {
             'github_metrics': {'forks': 10000},
@@ -898,8 +894,8 @@ class TestTrustScoreBlending:
                 {'login': 'a', 'contributions': 100, 'country_code': 'CN'},
             ]
         }
-        # maturity=100, geo=0 → 0.6*100 + 0.4*0 = 60
-        assert wf._calculate_trust_score(results) == 60.0
+        # Location should not affect the default trust score unless the compliance rule is enabled.
+        assert wf._calculate_trust_score(results) == 80.0
 
     def test_no_contributors_uses_neutral_geo(self):
         wf = _make_workflow()
