@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "osspolicyguard"
+version = "0.1.0"
+description = "Policy-as-code engine for evaluating open-source package risk and approval decisions"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "OSSPolicyGuard contributors" }]
+license = { text = "MIT" }
+dependencies = [
+  "PyYAML>=6.0",
+  "requests>=2.31",
+  "pandas>=2.0",
+  "matplotlib>=3.8",
+  "ipython>=8.0",
+  "ipywidgets>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black>=24.0",
+  "mypy>=1.10",
+  "pytest>=8.0",
+  "ruff>=0.5",
+  "jsonschema>=4.0",
+]
+
+[project.scripts]
+osspolicyguard = "osspolicyguard.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["oss_scorer"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100

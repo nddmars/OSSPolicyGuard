@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "tool_version": "0.1.0",
+  "generated_at": "2026-08-06T00:00:00+00:00",
+  "policy": {"name": "default", "version": "0.1.0"},
+  "package": {"name": "express", "ecosystem": "npm", "version": null},
+  "decision": "APPROVED",
+  "score": 84,
+  "dimensions": {"security": 88, "maintenance": 79, "community": 91, "supply_chain_risk": 76},
+  "findings": [],
+  "evidence": [],
+  "warnings": [],
+  "malicious_package_detected": false,
+  "enforcement": "default"
+}

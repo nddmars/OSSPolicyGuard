@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/osspolicyguard/schema.json",
+  "title": "OSSPolicyGuard Scan Result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool_version",
+    "generated_at",
+    "policy",
+    "package",
+    "decision",
+    "score",
+    "dimensions",
+    "findings",
+    "evidence",
+    "warnings",
+    "enforcement"
+  ],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "tool_version": {"type": "string"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "policy": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string"},
+        "version": {"type": "string"}
+      }
+    },
+    "package": {
+      "type": "object",
+      "required": ["name", "ecosystem"],
+      "properties": {
+        "name": {"type": "string"},
+        "ecosystem": {"type": "string"},
+        "version": {"type": ["string", "null"]}
+      }
+    },
+    "decision": {"type": "string", "enum": ["APPROVED", "REVIEW", "PROHIBITED"]},
+    "score": {"type": "number"},
+    "dimensions": {
+      "type": "object",
+      "required": ["security", "maintenance", "community", "supply_chain_risk"],
+      "properties": {
+        "security": {"type": "number"},
+        "maintenance": {"type": "number"},
+        "community": {"type": "number"},
+        "supply_chain_risk": {"type": "number"}
+      }
+    },
+    "findings": {"type": "array", "items": {"type": "object"}},
+    "evidence": {"type": "array", "items": {"type": "object"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "malicious_package_detected": {"type": "boolean"},
+    "enforcement": {"type": "string", "enum": ["default", "review_fails_ci"]}
+  },
+  "additionalProperties": false
+}
