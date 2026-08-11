@@ -1,0 +1,1374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OWASP GenAI Agentic Security — Threat Model &amp; Control Mapping</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:              #0d0d0d;
+      --bg-raised:       #141414;
+      --bg-card:         #1a1a1a;
+      --bg-hover:        #1f1f1f;
+      --border:          #272727;
+      --border-accent:   #333;
+      --text-primary:    #e4e4e4;
+      --text-secondary:  #999;
+      --text-muted:      #555;
+      --owasp-red:       #e8212e;
+      --owasp-red-dim:   rgba(232,33,46,0.13);
+      --critical:        #ff2d3b;
+      --critical-bg:     rgba(255,45,59,0.11);
+      --high:            #ff7a00;
+      --high-bg:         rgba(255,122,0,0.11);
+      --medium:          #f5c518;
+      --medium-bg:       rgba(245,197,24,0.11);
+      --green:           #00c853;
+      --green-bg:        rgba(0,200,83,0.1);
+      --blue:            #2979ff;
+      --blue-bg:         rgba(41,121,255,0.1);
+      --mono: 'IBM Plex Mono', monospace;
+      --sans: 'IBM Plex Sans', sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.65;
+      min-height: 100vh;
+    }
+
+    /* ── HEADER ─────────────────────────────────────────────── */
+    .site-header {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(13,13,13,0.96);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      height: 54px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 2rem;
+    }
+    .header-brand { display: flex; align-items: center; gap: 12px; }
+    .owasp-badge {
+      background: var(--owasp-red); color: #fff;
+      font-family: var(--mono); font-weight: 700; font-size: 11px;
+      letter-spacing: 0.08em; padding: 4px 9px; border-radius: 2px;
+    }
+    .header-title {
+      font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+      color: var(--text-secondary); letter-spacing: 0.02em;
+    }
+    .header-nav { display: flex; gap: 1.75rem; }
+    .header-nav a {
+      font-family: var(--mono); font-size: 10px; color: var(--text-muted);
+      text-decoration: none; letter-spacing: 0.07em; text-transform: uppercase;
+      transition: color 0.18s;
+    }
+    .header-nav a:hover { color: var(--owasp-red); }
+
+    /* ── HERO ───────────────────────────────────────────────── */
+    .hero {
+      border-bottom: 1px solid var(--border);
+      padding: 4rem 2rem 3rem;
+      position: relative; overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        repeating-linear-gradient(0deg, transparent, transparent 39px,
+          rgba(255,255,255,0.013) 39px, rgba(255,255,255,0.013) 40px),
+        repeating-linear-gradient(90deg, transparent, transparent 79px,
+          rgba(255,255,255,0.013) 79px, rgba(255,255,255,0.013) 80px);
+      pointer-events: none;
+    }
+    .hero-inner { max-width: 1100px; margin: 0 auto; position: relative; }
+    .hero-eyebrow {
+      font-family: var(--mono); font-size: 10px; color: var(--owasp-red);
+      letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 1rem;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .hero-eyebrow::before {
+      content: ''; display: inline-block; width: 22px; height: 1px;
+      background: var(--owasp-red); flex-shrink: 0;
+    }
+    .hero-title {
+      font-family: var(--mono); font-size: clamp(17px,2.4vw,25px);
+      font-weight: 700; line-height: 1.3; color: var(--text-primary);
+      max-width: 820px; margin-bottom: 0.4rem;
+    }
+    .hero-subtitle {
+      font-family: var(--mono); font-size: 12.5px; color: var(--owasp-red);
+      margin-bottom: 2.25rem; letter-spacing: 0.01em;
+    }
+    .hero-meta {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(185px,1fr));
+      border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+      max-width: 920px;
+    }
+    .meta-item {
+      padding: 0.875rem 1.25rem;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .meta-item:last-child { border-right: none; }
+    .meta-label {
+      font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.13em;
+      text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px;
+    }
+    .meta-value {
+      font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+      color: var(--text-primary);
+    }
+    .meta-value.draft { color: var(--medium); }
+
+    /* ── LAYOUT ─────────────────────────────────────────────── */
+    .main-content { max-width: 1100px; margin: 0 auto; padding: 0 2rem 5rem; }
+    .section { padding: 3rem 0 2.5rem; border-bottom: 1px solid var(--border); }
+    .section:last-child { border-bottom: none; }
+    .section-header {
+      display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.4rem;
+    }
+    .section-num {
+      font-family: var(--mono); font-size: 10px; color: var(--owasp-red);
+      font-weight: 700; letter-spacing: 0.06em; white-space: nowrap;
+    }
+    .section-title {
+      font-family: var(--mono); font-size: 16px; font-weight: 700;
+      color: var(--text-primary); letter-spacing: -0.01em;
+    }
+    .section-desc {
+      font-size: 13px; color: var(--text-secondary); margin-bottom: 2rem;
+      max-width: 720px; line-height: 1.6;
+    }
+    .scan-line {
+      height: 1px;
+      background: linear-gradient(90deg, transparent 0%, var(--owasp-red) 50%, transparent 100%);
+      opacity: 0.35;
+    }
+
+    /* ── ATTACK SURFACE ─────────────────────────────────────── */
+    .surface-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 1px; background: var(--border);
+      border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+    }
+    .surface-layer {
+      background: var(--bg-card); padding: 1.5rem;
+      transition: background 0.18s;
+    }
+    .surface-layer:hover { background: var(--bg-hover); }
+    .surface-layer.full { grid-column: 1 / -1; }
+    .layer-head { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
+    .layer-tag {
+      font-family: var(--mono); font-size: 9px; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 8px;
+      border-radius: 2px; background: var(--owasp-red-dim); color: var(--owasp-red);
+      border: 1px solid rgba(232,33,46,0.22); white-space: nowrap;
+    }
+    .layer-name {
+      font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+      color: var(--text-primary);
+    }
+    .vec-list { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+    .vec-list.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 2rem; }
+    .vec-list li {
+      display: flex; align-items: flex-start; gap: 8px;
+      font-size: 12.5px; color: var(--text-secondary); line-height: 1.55;
+    }
+    .vec-list li::before {
+      content: '▸'; color: var(--owasp-red); font-size: 9.5px;
+      margin-top: 4px; flex-shrink: 0;
+    }
+    .vec-label {
+      font-family: var(--mono); font-size: 11px; font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    /* ── FILTER BAR ─────────────────────────────────────────── */
+    .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 1.5rem; }
+    .filter-lbl {
+      font-family: var(--mono); font-size: 9.5px; color: var(--text-muted);
+      letter-spacing: 0.09em; text-transform: uppercase; margin-right: 4px;
+    }
+    .fbtn {
+      font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+      letter-spacing: 0.07em; text-transform: uppercase;
+      padding: 5px 13px; border-radius: 2px; cursor: pointer;
+      border: 1px solid transparent; transition: all 0.15s; background: none;
+    }
+    .fbtn.all { border-color: var(--border-accent); color: var(--text-secondary); background: var(--bg-card); }
+    .fbtn.all.active, .fbtn.all:hover { background: var(--owasp-red); border-color: var(--owasp-red); color: #fff; }
+    .fbtn.critical { background: var(--critical-bg); color: var(--critical); border-color: rgba(255,45,59,0.28); }
+    .fbtn.critical.active, .fbtn.critical:hover { background: var(--critical); color: #fff; border-color: var(--critical); }
+    .fbtn.high { background: var(--high-bg); color: var(--high); border-color: rgba(255,122,0,0.28); }
+    .fbtn.high.active, .fbtn.high:hover { background: var(--high); color: #fff; border-color: var(--high); }
+    .fbtn.medium { background: var(--medium-bg); color: var(--medium); border-color: rgba(245,197,24,0.28); }
+    .fbtn.medium.active, .fbtn.medium:hover { background: var(--medium); color: #000; border-color: var(--medium); }
+
+    /* ── THREAT CARDS ───────────────────────────────────────── */
+    .threats-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    .threat-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 3px; overflow: hidden;
+      transition: opacity 0.22s, transform 0.22s;
+    }
+    .threat-card.hidden { display: none; }
+    .threat-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+    .tc-head {
+      padding: 0.875rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .tc-id-row { display: flex; align-items: center; gap: 8px; }
+    .tc-id {
+      font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+      letter-spacing: 0.08em; color: var(--text-muted);
+      background: var(--bg-raised); padding: 2px 7px; border-radius: 2px;
+      border: 1px solid var(--border-accent);
+    }
+    .sev-badge {
+      font-family: var(--mono); font-size: 8.5px; font-weight: 700;
+      letter-spacing: 0.11em; text-transform: uppercase;
+      padding: 3px 8px; border-radius: 2px;
+    }
+    .sev-badge.critical { background: var(--critical-bg); color: var(--critical); border: 1px solid rgba(255,45,59,0.3); }
+    .sev-badge.high     { background: var(--high-bg);     color: var(--high);     border: 1px solid rgba(255,122,0,0.3); }
+    .sev-badge.medium   { background: var(--medium-bg);   color: var(--medium);   border: 1px solid rgba(245,197,24,0.3); }
+    .cvss {
+      font-family: var(--mono); font-size: 9.5px; font-weight: 600;
+      color: var(--text-muted);
+    }
+    .tc-name {
+      font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+      color: var(--text-primary); line-height: 1.4;
+      padding: 1rem 1.25rem 0;
+    }
+    .tc-body { padding: 0.75rem 1.25rem 1.25rem; }
+    .tc-field { margin-bottom: 0.7rem; }
+    .tc-field-lbl {
+      font-family: var(--mono); font-size: 8.5px; font-weight: 700;
+      letter-spacing: 0.11em; text-transform: uppercase; color: var(--text-muted);
+      margin-bottom: 3px;
+    }
+    .tc-field-val { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
+    .tc-field-val code {
+      font-family: var(--mono); font-size: 10.5px;
+      background: var(--bg-raised); padding: 1px 5px; border-radius: 2px;
+      color: var(--text-primary);
+    }
+    .impact-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+    .itag {
+      font-family: var(--mono); font-size: 8.5px; font-weight: 700;
+      letter-spacing: 0.05em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 2px;
+    }
+    .itag.c { background:rgba(255,45,59,0.1);  color:#ff8a90; border:1px solid rgba(255,45,59,0.2); }
+    .itag.i { background:rgba(255,122,0,0.1);  color:#ffb366; border:1px solid rgba(255,122,0,0.2); }
+    .itag.a { background:rgba(245,197,24,0.1); color:#f5c518; border:1px solid rgba(245,197,24,0.2); }
+    .itag.p { background:rgba(41,121,255,0.1); color:#6ea4ff; border:1px solid rgba(41,121,255,0.2); }
+
+    /* ── CONTROL TABLE ──────────────────────────────────────── */
+    .ctrl-toolbar {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 1rem;
+    }
+    .ctrl-hint { font-family: var(--mono); font-size: 10px; color: var(--text-muted); }
+    .copy-btn {
+      font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 6px 14px; background: var(--bg-card);
+      border: 1px solid var(--border-accent); color: var(--text-secondary);
+      border-radius: 2px; cursor: pointer; display: flex; align-items: center;
+      gap: 6px; transition: all 0.15s;
+    }
+    .copy-btn:hover { background: var(--owasp-red); border-color: var(--owasp-red); color: #fff; }
+    .copy-btn.ok { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+
+    .ctrl-table {
+      width: 100%; border-collapse: collapse;
+      border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+    }
+    .ctrl-table th {
+      font-family: var(--mono); font-size: 8.5px; font-weight: 700;
+      letter-spacing: 0.11em; text-transform: uppercase; color: var(--text-muted);
+      background: var(--bg-raised); padding: 0.75rem 1rem;
+      text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .ctrl-table td { padding: 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .ctrl-table tr:last-child td { border-bottom: none; }
+
+    .ctrl-trigger {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0.875rem 1rem; cursor: pointer; background: var(--bg-card);
+      transition: background 0.15s; user-select: none;
+    }
+    .ctrl-trigger:hover { background: var(--bg-hover); }
+    .chevron {
+      font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+      transition: transform 0.22s; width: 14px; flex-shrink: 0;
+    }
+    .ctrl-trigger.open .chevron { transform: rotate(90deg); }
+    .ctrl-tid {
+      font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+      color: var(--text-muted); background: var(--bg-raised);
+      padding: 2px 7px; border-radius: 2px; border: 1px solid var(--border-accent);
+      white-space: nowrap;
+    }
+    .ctrl-tname {
+      font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+      color: var(--text-primary); flex: 1;
+    }
+
+    .ctrl-body {
+      overflow: hidden; max-height: 0;
+      transition: max-height 0.32s cubic-bezier(0.4,0,0.2,1);
+    }
+    .ctrl-body.open { max-height: 1200px; }
+
+    .ctrl-cols {
+      border-top: 1px solid var(--border);
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+    }
+    .ctrl-col {
+      padding: 1.1rem 1.1rem; border-right: 1px solid var(--border);
+    }
+    .ctrl-col:last-child { border-right: none; }
+    .ctrl-col-hd {
+      font-family: var(--mono); font-size: 8.5px; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 0.75rem;
+    }
+    .ctrl-col-hd.pv { color: var(--green); }
+    .ctrl-col-hd.dt { color: var(--blue); }
+    .ctrl-col-hd.rs { color: var(--owasp-red); }
+
+    .ctrl-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .ctrl-list li {
+      font-size: 11.5px; color: var(--text-secondary); line-height: 1.5;
+      display: flex; gap: 7px;
+    }
+    .ctrl-list li::before {
+      content: '→'; font-family: var(--mono); font-size: 9.5px;
+      color: var(--text-muted); flex-shrink: 0; margin-top: 2px;
+    }
+
+    .ctrl-refs {
+      background: var(--bg-raised); border-top: 1px solid var(--border);
+      padding: 0.7rem 1rem; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    }
+    .refs-lbl {
+      font-family: var(--mono); font-size: 8.5px; color: var(--text-muted);
+      letter-spacing: 0.08em; margin-right: 2px;
+    }
+    .rtag {
+      font-family: var(--mono); font-size: 8.5px; font-weight: 600;
+      padding: 2px 7px; border-radius: 2px; letter-spacing: 0.04em;
+    }
+    .rtag.nist { background: rgba(41,121,255,0.13); color: #6ea4ff; border: 1px solid rgba(41,121,255,0.22); }
+    .rtag.llm  { background: rgba(232,33,46,0.1);   color: #ff8a90; border: 1px solid rgba(232,33,46,0.22); }
+    .rtag.slsa { background: rgba(0,200,83,0.1);     color: #00c853; border: 1px solid rgba(0,200,83,0.22); }
+
+    /* ── GUARDRAILS ─────────────────────────────────────────── */
+    .guard-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    .guard-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 3px; padding: 1.5rem;
+      transition: background 0.18s, border-color 0.18s;
+    }
+    .guard-card:hover { background: var(--bg-hover); border-color: var(--border-accent); }
+    .guard-tag {
+      font-family: var(--mono); font-size: 9px; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--owasp-red);
+      background: var(--owasp-red-dim); border: 1px solid rgba(232,33,46,0.22);
+      padding: 3px 9px; border-radius: 2px; display: inline-block;
+      margin-bottom: 0.875rem;
+    }
+    .guard-title {
+      font-family: var(--mono); font-size: 12.5px; font-weight: 600;
+      color: var(--text-primary); margin-bottom: 0.75rem; line-height: 1.4;
+    }
+    .guard-desc {
+      font-size: 12.5px; color: var(--text-secondary); line-height: 1.6;
+      margin-bottom: 1rem;
+    }
+    .guard-steps { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+    .guard-steps li {
+      font-size: 12px; color: var(--text-secondary); line-height: 1.55;
+      display: grid; grid-template-columns: 20px 1fr; gap: 6px;
+    }
+    .sn {
+      font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+      color: var(--owasp-red); margin-top: 2px;
+    }
+    .code-block {
+      font-family: var(--mono); font-size: 10.5px; line-height: 1.65;
+      background: var(--bg-raised); border: 1px solid var(--border-accent);
+      border-radius: 2px; padding: 0.875rem 1rem;
+      margin-top: 0.875rem; overflow-x: auto; color: #a8c5ff;
+    }
+    .code-block .cm  { color: #4a4a4a; }
+    .code-block .ky  { color: #ff9cac; }
+    .code-block .vl  { color: #b5e48c; }
+    .code-block .st  { color: #a8c5ff; }
+    .code-block .op  { color: #ffcf86; }
+
+    /* ── FOOTER ─────────────────────────────────────────────── */
+    .site-footer {
+      border-top: 1px solid var(--border); padding: 2.5rem 2rem;
+      text-align: center;
+    }
+    .foot-inner {
+      max-width: 1100px; margin: 0 auto;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .foot-txt { font-family: var(--mono); font-size: 10.5px; color: var(--text-muted); }
+    .foot-txt a { color: var(--owasp-red); text-decoration: none; }
+    .foot-txt a:hover { text-decoration: underline; }
+
+    /* ── TOAST ──────────────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 24px; right: 24px; z-index: 999;
+      background: var(--bg-card); border: 1px solid var(--green);
+      color: var(--green); font-family: var(--mono); font-size: 10.5px;
+      padding: 10px 16px; border-radius: 3px;
+      opacity: 0; transform: translateY(6px); pointer-events: none;
+      transition: opacity 0.18s, transform 0.18s;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    /* ── ANIMATIONS ─────────────────────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity:0; transform:translateY(5px); }
+      to   { opacity:1; transform:translateY(0); }
+    }
+    .threat-card { animation: fadeUp 0.25s ease both; }
+
+    /* ── RESPONSIVE ─────────────────────────────────────────── */
+    @media (max-width: 800px) {
+      .surface-grid, .threats-grid, .guard-grid { grid-template-columns: 1fr; }
+      .threat-card:last-child:nth-child(odd) { grid-column: auto; }
+      .ctrl-cols { grid-template-columns: 1fr; }
+      .ctrl-col { border-right: none; border-bottom: 1px solid var(--border); }
+      .ctrl-col:last-child { border-bottom: none; }
+      .hero-meta { grid-template-columns: 1fr 1fr; }
+      .vec-list.two-col { grid-template-columns: 1fr; }
+      .header-nav { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ════════════════════════════════ HEADER ═══════════════════════════════ -->
+<header class="site-header">
+  <div class="header-brand">
+    <span class="owasp-badge">OWASP</span>
+    <span class="header-title">GenAI Agentic Security Working Group</span>
+  </div>
+  <nav class="header-nav">
+    <a href="#attack-surface">Attack Surface</a>
+    <a href="#threat-scenarios">Threats</a>
+    <a href="#control-mapping">Controls</a>
+    <a href="#guardrails">Guardrails</a>
+  </nav>
+</header>
+
+<!-- ════════════════════════════════ HERO ════════════════════════════════ -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-eyebrow">Formal Threat Model &amp; Control Reference</div>
+    <h1 class="hero-title">OWASP GenAI Agentic Security —<br>Threat Model &amp; Control Mapping</h1>
+    <p class="hero-subtitle">Security Guardrails for Autonomous DevSecOps Agents</p>
+    <div class="hero-meta">
+      <div class="meta-item">
+        <div class="meta-label">Workstream</div>
+        <div class="meta-value">Agentic AI Security</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Version</div>
+        <div class="meta-value">0.1-draft</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Status</div>
+        <div class="meta-value draft">Draft for Community Review</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Submission Target</div>
+        <div class="meta-value">OWASP GenAI GitHub</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Contribution Area</div>
+        <div class="meta-value">DevSecOps Agent Guardrails</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="scan-line"></div>
+
+<!-- ════════════════════════════ MAIN CONTENT ════════════════════════════ -->
+<main class="main-content">
+
+  <!-- ──────────────────── § 1 ATTACK SURFACE ──────────────────────── -->
+  <section class="section" id="attack-surface">
+    <div class="section-header">
+      <span class="section-num">§ 1.0</span>
+      <h2 class="section-title">Attack Surface Inventory</h2>
+    </div>
+    <p class="section-desc">Enumerated attack surface across five architectural layers of autonomous DevSecOps agent pipelines. Each layer presents distinct threat vectors requiring targeted mitigations.</p>
+
+    <div class="surface-grid">
+
+      <!-- L-01 -->
+      <div class="surface-layer">
+        <div class="layer-head">
+          <span class="layer-tag">L-01</span>
+          <span class="layer-name">Code Generation Layer</span>
+        </div>
+        <ul class="vec-list">
+          <li><div><span class="vec-label">LLM Prompt Injection — </span>Adversarial instructions embedded in PR comments, issue tracker content, or ingested documentation that redirect agent code-generation behavior to produce malicious outputs or suppress security findings.</div></li>
+          <li><div><span class="vec-label">Training Data Poisoning — </span>Contamination of fine-tuning corpora or RAG retrieval stores with crafted vulnerable code patterns, causing systematic generation of exploitable outputs at scale across all agent consumers.</div></li>
+          <li><div><span class="vec-label">Hallucinated Dependencies — </span>LLM-generated package references that do not exist in legitimate registries, exploitable via dependency squatting where attackers pre-register the hallucinated names with malicious payloads.</div></li>
+          <li><div><span class="vec-label">Context Window Overflow — </span>Injection of oversized context payloads designed to evict prior system prompt constraints, artificially expanding the agent's effective permission envelope during generation.</div></li>
+        </ul>
+      </div>
+
+      <!-- L-02 -->
+      <div class="surface-layer">
+        <div class="layer-head">
+          <span class="layer-tag">L-02</span>
+          <span class="layer-name">Pipeline Execution Layer</span>
+        </div>
+        <ul class="vec-list">
+          <li><div><span class="vec-label">CI/CD Agent Takeover — </span>Exploitation of over-permissioned pipeline execution agents to hijack build steps, inject arbitrary shell commands, or exfiltrate secrets from runner environments via prompt injection or malicious task input.</div></li>
+          <li><div><span class="vec-label">Privilege Escalation — </span>Leveraging pipeline agent credentials (GITHUB_TOKEN, OIDC tokens) to escalate from repository-scoped access to organization-wide or cloud IAM permissions beyond the pipeline's intended operational scope.</div></li>
+          <li><div><span class="vec-label">Tool Misuse — </span>Autonomous agents invoking registered tools (file system writes, network calls, package installs) outside their intended scope, whether via prompt injection, emergent behavior, or malicious tool schema manipulation.</div></li>
+          <li><div><span class="vec-label">Runner Environment Persistence — </span>Malicious artifacts introduced into shared runner caches, workspace volumes, or container layers to achieve cross-build persistence and affect subsequent pipeline runs.</div></li>
+        </ul>
+      </div>
+
+      <!-- L-03 -->
+      <div class="surface-layer">
+        <div class="layer-head">
+          <span class="layer-tag">L-03</span>
+          <span class="layer-name">Supply Chain Layer</span>
+        </div>
+        <ul class="vec-list">
+          <li><div><span class="vec-label">Malicious Package Suggestion — </span>Agent recommends or autonomously installs packages with known malicious payloads, compromised maintainer accounts, or malware in post-install scripts without validation against reputation signals.</div></li>
+          <li><div><span class="vec-label">SBOM Tampering — </span>Manipulation of Software Bill of Materials artifacts generated or consumed by agents, obscuring dependency provenance and enabling silent introduction of vulnerable or malicious components.</div></li>
+          <li><div><span class="vec-label">Dependency Confusion — </span>Exploitation of package resolution order ambiguities when agents suggest internal package names that can be shadowed by attacker-controlled public registry entries with higher version numbers.</div></li>
+          <li><div><span class="vec-label">Registry Poisoning — </span>Compromise of agent-trusted package registries or mirrors to serve trojanized versions of legitimate packages referenced in AI-generated code recommendations.</div></li>
+        </ul>
+      </div>
+
+      <!-- L-04 -->
+      <div class="surface-layer">
+        <div class="layer-head">
+          <span class="layer-tag">L-04</span>
+          <span class="layer-name">Orchestration Layer</span>
+        </div>
+        <ul class="vec-list">
+          <li><div><span class="vec-label">Multi-Agent Trust Violations — </span>Absence of inter-agent authentication or authorization boundaries allowing a compromised sub-agent to impersonate an orchestrator, forge task delegations, or inject adversarial instructions into sibling agent contexts.</div></li>
+          <li><div><span class="vec-label">MCP Server Abuse — </span>Exploitation of Model Context Protocol server vulnerabilities or misconfigurations to serve adversarial tool responses, manipulate tool definitions at registration time, or exfiltrate agent context data.</div></li>
+          <li><div><span class="vec-label">Memory Poisoning — </span>Persistent injection of adversarial data into agent memory stores (vector DBs, conversation history, scratchpad files) to influence future agent behavior across sessions and builds.</div></li>
+          <li><div><span class="vec-label">Orchestrator Token Flooding — </span>Denial-of-service through token exhaustion or context flooding attacks against orchestration LLMs, degrading pipeline throughput and potentially triggering fallback to degraded, less-secure execution modes.</div></li>
+        </ul>
+      </div>
+
+      <!-- L-05 full width -->
+      <div class="surface-layer full">
+        <div class="layer-head">
+          <span class="layer-tag">L-05</span>
+          <span class="layer-name">Output / Deploy Layer</span>
+        </div>
+        <ul class="vec-list two-col">
+          <li><div><span class="vec-label">Insecure IaC Generation — </span>AI-generated Infrastructure-as-Code containing misconfigured IAM policies, publicly exposed storage buckets, disabled encryption at rest, or overly permissive network security groups that pass functional tests while violating security baselines.</div></li>
+          <li><div><span class="vec-label">Secrets in Generated Artifacts — </span>Hardcoded credentials, API keys, or cryptographic material embedded in AI-generated source files, configuration templates, container images, or deployment manifests — either hallucinated or injected.</div></li>
+          <li><div><span class="vec-label">Unsigned Pipeline Outputs — </span>Artifacts generated or modified by agents (container images, release binaries, IaC modules, SBOMs) published without cryptographic signing, enabling undetectable tampering at delivery or deployment time.</div></li>
+          <li><div><span class="vec-label">Compliance Drift — </span>AI-generated configurations that satisfy functional requirements while silently violating security policy baselines (PCI DSS, SOC 2, CIS Benchmarks), creating audit risk and exploitable exposure undetected until review.</div></li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ──────────────────── § 2 THREAT SCENARIOS ─────────────────────── -->
+  <section class="section" id="threat-scenarios">
+    <div class="section-header">
+      <span class="section-num">§ 2.0</span>
+      <h2 class="section-title">Threat Scenarios</h2>
+    </div>
+    <p class="section-desc">Five detailed threat scenarios with CVSS-aligned severity ratings, attack vectors, affected components, and impact classifications. Filter by severity tier to focus analysis.</p>
+
+    <div class="filter-bar">
+      <span class="filter-lbl">Filter:</span>
+      <button class="fbtn all active" data-f="all">All</button>
+      <button class="fbtn critical" data-f="critical">Critical</button>
+      <button class="fbtn high" data-f="high">High</button>
+      <button class="fbtn medium" data-f="medium">Medium</button>
+    </div>
+
+    <div class="threats-grid" id="threatsGrid">
+
+      <!-- T-01 -->
+      <div class="threat-card" data-sev="high">
+        <div class="tc-head">
+          <div class="tc-id-row">
+            <span class="tc-id">T-01</span>
+            <span class="sev-badge high">High</span>
+          </div>
+          <span class="cvss">CVSS 8.1</span>
+        </div>
+        <div class="tc-name">Prompt Injection via Code Review Feedback Loop</div>
+        <div class="tc-body">
+          <div class="tc-field">
+            <div class="tc-field-lbl">Attack Vector</div>
+            <div class="tc-field-val">An adversary submits a PR containing crafted text in inline review comments, commit messages, or linked issue descriptions that embed injection directives. When the AI code review agent ingests this as context, the injected instructions override system-level constraints — causing the agent to approve insecure code, suppress security findings, or propose malicious modifications to CI workflow files (<code>.github/workflows/</code>).</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Affected Component</div>
+            <div class="tc-field-val"><code>AI Review Agent</code> → <code>CI/CD Pipeline Trigger</code> → <code>GITHUB_TOKEN Scope</code></div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Likelihood</div>
+            <div class="tc-field-val"><strong>High</strong> — No specialized access required; exploitable by any PR contributor on any public repository</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Impact Profile</div>
+            <div class="impact-row">
+              <span class="itag i">Integrity</span>
+              <span class="itag c">Confidentiality</span>
+              <span class="itag p">Privilege Gain</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- T-02 -->
+      <div class="threat-card" data-sev="high">
+        <div class="tc-head">
+          <div class="tc-id-row">
+            <span class="tc-id">T-02</span>
+            <span class="sev-badge high">High</span>
+          </div>
+          <span class="cvss">CVSS 8.4</span>
+        </div>
+        <div class="tc-name">Hallucinated Dependency Supply Chain Attack</div>
+        <div class="tc-body">
+          <div class="tc-field">
+            <div class="tc-field-lbl">Attack Vector</div>
+            <div class="tc-field-val">An LLM code generation agent suggests a plausible-but-nonexistent package name (e.g., <code>requests-oauth2-helper</code>). An attacker pre-registers this name on PyPI/npm with a malicious post-install hook. When the agent autonomously runs <code>pip install</code> or adds the name to <code>requirements.txt</code>, the trojanized package executes during build — exfiltrating secrets or establishing backdoor persistence in the runner.</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Affected Component</div>
+            <div class="tc-field-val"><code>Package Registry (PyPI/npm)</code> → <code>Agent Tool: shell/install</code> → <code>Build Environment</code></div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Likelihood</div>
+            <div class="tc-field-val"><strong>Medium</strong> — Requires hallucination event + attacker name registration; incidence rising with LLM-assisted coding adoption rates</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Impact Profile</div>
+            <div class="impact-row">
+              <span class="itag c">Confidentiality</span>
+              <span class="itag i">Integrity</span>
+              <span class="itag a">Availability</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- T-03 -->
+      <div class="threat-card" data-sev="critical">
+        <div class="tc-head">
+          <div class="tc-id-row">
+            <span class="tc-id">T-03</span>
+            <span class="sev-badge critical">Critical</span>
+          </div>
+          <span class="cvss">CVSS 9.1</span>
+        </div>
+        <div class="tc-name">Autonomous Agent Privilege Escalation in CI/CD</div>
+        <div class="tc-body">
+          <div class="tc-field">
+            <div class="tc-field-lbl">Attack Vector</div>
+            <div class="tc-field-val">A DevSecOps agent operating with <code>contents: write</code> and <code>id-token: write</code> GitHub Actions permissions is manipulated via prompt injection or malicious task input to request an OIDC identity token for cloud provider authentication. The agent then assumes an IAM role with broader privileges than required, enabling lateral movement to cloud resources, cross-account operations, or secret store exfiltration outside the intended pipeline boundary.</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Affected Component</div>
+            <div class="tc-field-val"><code>GitHub Actions Runner</code> → <code>OIDC Token Provider</code> → <code>Cloud IAM Role</code> → <code>Production Resources</code></div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Likelihood</div>
+            <div class="tc-field-val"><strong>Medium</strong> — Requires over-permissioned pipeline setup; extremely common in early-stage agentic DevSecOps deployments</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Impact Profile</div>
+            <div class="impact-row">
+              <span class="itag p">Privilege Escalation</span>
+              <span class="itag c">Confidentiality</span>
+              <span class="itag i">Integrity</span>
+              <span class="itag a">Availability</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- T-04 -->
+      <div class="threat-card" data-sev="critical">
+        <div class="tc-head">
+          <div class="tc-id-row">
+            <span class="tc-id">T-04</span>
+            <span class="sev-badge critical">Critical</span>
+          </div>
+          <span class="cvss">CVSS 9.3</span>
+        </div>
+        <div class="tc-name">MCP Server Compromise Leading to Pipeline Takeover</div>
+        <div class="tc-body">
+          <div class="tc-field">
+            <div class="tc-field-lbl">Attack Vector</div>
+            <div class="tc-field-val">An attacker compromises or stands up a malicious Model Context Protocol (MCP) server trusted by the orchestration agent for tool definitions. The rogue server returns trojanized tool schemas, poisoned execution responses, or fabricated read results — causing the agent to delete resources, exfiltrate data, or disable security controls while believing it is executing legitimate pipeline steps. Absence of MCP server identity verification makes this transparent to the agent.</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Affected Component</div>
+            <div class="tc-field-val"><code>MCP Server</code> → <code>Agent Tool Registry</code> → <code>Pipeline Orchestrator</code> → <code>All Downstream Tools</code></div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Likelihood</div>
+            <div class="tc-field-val"><strong>Medium</strong> — MCP adoption is early-stage; authentication gaps are well-documented and the attack surface grows as adoption scales</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Impact Profile</div>
+            <div class="impact-row">
+              <span class="itag p">Full Takeover</span>
+              <span class="itag c">Confidentiality</span>
+              <span class="itag i">Integrity</span>
+              <span class="itag a">Availability</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- T-05 -->
+      <div class="threat-card" data-sev="medium">
+        <div class="tc-head">
+          <div class="tc-id-row">
+            <span class="tc-id">T-05</span>
+            <span class="sev-badge medium">Medium</span>
+          </div>
+          <span class="cvss">CVSS 7.2</span>
+        </div>
+        <div class="tc-name">AI-Generated IaC with Embedded Backdoor Secrets</div>
+        <div class="tc-body">
+          <div class="tc-field">
+            <div class="tc-field-lbl">Attack Vector</div>
+            <div class="tc-field-val">An AI agent generating Terraform or CloudFormation templates either (a) hallucinates hardcoded credentials in resource definitions, (b) is injected with instructions to embed specific API keys, or (c) generates default-insecure configurations (<code>cidr: 0.0.0.0/0</code>, public S3 buckets, disabled KMS). These pass automated validation if static analysis gates are absent, deploying attacker-accessible backdoors into production infrastructure undetected.</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Affected Component</div>
+            <div class="tc-field-val"><code>IaC Generator Agent</code> → <code>Terraform / CloudFormation Module</code> → <code>Cloud Infrastructure</code></div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Likelihood</div>
+            <div class="tc-field-val"><strong>Medium-High</strong> — Hallucinated secrets are a documented LLM behavior; detection requires explicit, correctly-configured pipeline gates</div>
+          </div>
+          <div class="tc-field">
+            <div class="tc-field-lbl">Impact Profile</div>
+            <div class="impact-row">
+              <span class="itag c">Confidentiality</span>
+              <span class="itag i">Integrity</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ──────────────────── § 3 CONTROL MAPPING ──────────────────────── -->
+  <section class="section" id="control-mapping">
+    <div class="section-header">
+      <span class="section-num">§ 3.0</span>
+      <h2 class="section-title">Control Mapping Table</h2>
+    </div>
+    <p class="section-desc">Preventive, detective, and responsive controls mapped per threat, with references to OWASP LLM Top 10, NIST SSDF practice IDs, and SLSA supply chain levels. Click any row to expand.</p>
+
+    <div class="ctrl-toolbar">
+      <span class="ctrl-hint">↓ Click any row to expand controls &amp; framework references</span>
+      <button class="copy-btn" id="copyBtn">
+        <span>⎘</span>
+        <span id="copyTxt">Copy as Markdown</span>
+      </button>
+    </div>
+
+    <table class="ctrl-table" id="ctrlTable">
+      <thead>
+        <tr>
+          <th style="width:14px;"></th>
+          <th style="width:64px;">ID</th>
+          <th>Threat</th>
+          <th style="width:84px;">Severity</th>
+        </tr>
+      </thead>
+      <tbody>
+
+        <!-- ── T-01 ── -->
+        <tr><td colspan="4">
+          <div class="ctrl-trigger" onclick="toggleRow(this)">
+            <span class="chevron">▶</span>
+            <span class="ctrl-tid">T-01</span>
+            <span class="ctrl-tname">Prompt Injection via Code Review Feedback Loop</span>
+            <span class="sev-badge high" style="margin-left:auto;flex-shrink:0;">High</span>
+          </div>
+          <div class="ctrl-body">
+            <div class="ctrl-cols">
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd pv">Preventive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Schema-validate and sanitize all ingested PR metadata before inclusion in agent context windows; treat PR content as untrusted user-tier input, never as system instructions</li>
+                  <li>Enforce instruction hierarchy: system prompts must be structurally non-overridable by user-tier content; apply architectural separation between trusted and untrusted context slots</li>
+                  <li>Apply LLM output classifiers to detect injection artifacts in agent decisions before any write-back action is taken on the repository</li>
+                  <li>Enforce read-only agent access to PR comment data; require explicit human gate for any agent-generated write operations to CI configuration files</li>
+                  <li>Implement prompt templates with explicit injection-resistance patterns; version control all system prompts as security-relevant artifacts</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd dt">Detective Controls</div>
+                <ul class="ctrl-list">
+                  <li>Log complete agent context windows before LLM inference; retain in tamper-evident storage for anomaly correlation and incident investigation</li>
+                  <li>Monitor agent approval/rejection decision ratios with statistical outlier alerting; flag sudden reversals of prior security assessments</li>
+                  <li>Cross-validate agent code review findings against independent SAST output; alert on significant divergence between agent and tool-based findings</li>
+                  <li>Instrument agent output for injection signatures: unexpected shell commands, URL exfiltration patterns, or base64-encoded payloads in generated content</li>
+                  <li>Maintain audit trail linking every agent decision to the specific context window hash that produced it</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd rs">Responsive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Automatically quarantine PRs that triggered injection detection events; block merge pending mandatory human security review</li>
+                  <li>Immediately revoke agent write permissions upon detection of anomalous approval patterns; escalate to security team</li>
+                  <li>Rotate any secrets potentially accessible during the injection event window; audit repository access logs for exfiltration indicators</li>
+                  <li>Replay affected pipeline steps with validated, sanitized context after root cause identification and remediation</li>
+                </ul>
+              </div>
+            </div>
+            <div class="ctrl-refs">
+              <span class="refs-lbl">References:</span>
+              <span class="rtag llm">LLM01 — Prompt Injection</span>
+              <span class="rtag llm">LLM06 — Excessive Agency</span>
+              <span class="rtag nist">SSDF PW.1</span>
+              <span class="rtag nist">SSDF RV.1</span>
+              <span class="rtag slsa">SLSA L2 — Build Provenance</span>
+            </div>
+          </div>
+        </td></tr>
+
+        <!-- ── T-02 ── -->
+        <tr><td colspan="4">
+          <div class="ctrl-trigger" onclick="toggleRow(this)">
+            <span class="chevron">▶</span>
+            <span class="ctrl-tid">T-02</span>
+            <span class="ctrl-tname">Hallucinated Dependency Supply Chain Attack</span>
+            <span class="sev-badge high" style="margin-left:auto;flex-shrink:0;">High</span>
+          </div>
+          <div class="ctrl-body">
+            <div class="ctrl-cols">
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd pv">Preventive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Validate all agent-suggested package names against an approved internal registry allowlist before any installation; reject any package not present in the allowlist without explicit human override</li>
+                  <li>Implement OSSPolicyGuard-pattern dependency validation: verify package existence, publish age, download velocity, maintainer count, and OpenSSF Scorecard score before agent auto-install authorization</li>
+                  <li>Pin all dependencies to cryptographic hashes (SHA-256); reject any agent-proposed unpinned dependency additions in pipeline gates</li>
+                  <li>Enforce private package mirror with allowlist; block direct public registry access from pipeline runners via network egress policy</li>
+                  <li>Prohibit agents from executing install commands without human-in-the-loop confirmation when package risk score exceeds configured threshold</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd dt">Detective Controls</div>
+                <ul class="ctrl-list">
+                  <li>Generate and diff SBOMs before and after every agent-assisted dependency modification; alert on any newly introduced package</li>
+                  <li>Monitor for agent-suggested packages with zero or very low download history at time of suggestion — primary hallucination indicator</li>
+                  <li>Scan all agent-proposed dependency changes against OSV, NVD, and GitHub Advisory databases simultaneously</li>
+                  <li>Instrument post-install hooks to detect unexpected network connections, file system writes outside project scope, or process spawning from package scripts</li>
+                  <li>Alert on any package name not present in historical dependency graph or approved registry catalog</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd rs">Responsive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Immediately isolate and terminate build environments where unvalidated packages were installed; treat runner as fully compromised</li>
+                  <li>Rotate all secrets accessible from compromised build runner environments; enumerate all artifacts built with potentially compromised runners</li>
+                  <li>Report newly identified malicious package names to registry security contacts (PyPI Security, npm security) and relevant CERT/CC</li>
+                  <li>Audit all downstream artifacts produced by builds that ingested the malicious package for signs of tampering or payload embedding</li>
+                </ul>
+              </div>
+            </div>
+            <div class="ctrl-refs">
+              <span class="refs-lbl">References:</span>
+              <span class="rtag llm">LLM09 — Overreliance</span>
+              <span class="rtag llm">LLM02 — Insecure Output Handling</span>
+              <span class="rtag nist">SSDF PS.1</span>
+              <span class="rtag nist">SSDF PS.3</span>
+              <span class="rtag slsa">SLSA L3 — Isolated Build</span>
+            </div>
+          </div>
+        </td></tr>
+
+        <!-- ── T-03 ── -->
+        <tr><td colspan="4">
+          <div class="ctrl-trigger" onclick="toggleRow(this)">
+            <span class="chevron">▶</span>
+            <span class="ctrl-tid">T-03</span>
+            <span class="ctrl-tname">Autonomous Agent Privilege Escalation in CI/CD</span>
+            <span class="sev-badge critical" style="margin-left:auto;flex-shrink:0;">Critical</span>
+          </div>
+          <div class="ctrl-body">
+            <div class="ctrl-cols">
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd pv">Preventive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Apply strict least-privilege scoping via per-job <code>permissions:</code> blocks in GitHub Actions; never use workflow-level permission grants for agent jobs</li>
+                  <li>Enforce OIDC token audience restrictions and subject claim constraints binding tokens to specific repository, branch, and environment context</li>
+                  <li>Implement agent permission boundaries as OPA/Kyverno policy enforced at platform level, independent of agent self-reporting or system prompt constraints</li>
+                  <li>Prohibit <code>id-token: write</code> in any workflow job involving AI agent execution unless explicitly justified, documented, and security-reviewed</li>
+                  <li>Segment cloud IAM roles by pipeline stage; build-time agents must not carry deploy-phase permissions; use separate role chains per stage</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd dt">Detective Controls</div>
+                <ul class="ctrl-list">
+                  <li>Enable GitHub Actions audit logging with SIEM integration; alert on OIDC token requests from agent-driven workflow jobs</li>
+                  <li>Monitor cloud IAM activity for role assumptions originating from CI/CD OIDC providers; flag any cross-account or cross-environment assumptions</li>
+                  <li>Detect IAM actions outside the expected permission baseline for each pipeline stage using cloud-native access analyzers (AWS IAM Access Analyzer, GCP Policy Analyzer)</li>
+                  <li>Correlate pipeline execution timeline with cloud API call logs to surface anomalous access patterns not attributable to documented pipeline steps</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd rs">Responsive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Immediately revoke compromised OIDC token and associated temporary IAM credentials; invalidate the OIDC federation session</li>
+                  <li>Isolate affected pipeline runner; preserve complete logs including GitHub Actions runtime environment for forensic analysis</li>
+                  <li>Enumerate all API actions performed under the compromised role during the full incident window using cloud provider audit logs</li>
+                  <li>Apply emergency SCPs (AWS) or Organization Policies (GCP) to contain blast radius during investigation; scope to minimum required for business continuity</li>
+                </ul>
+              </div>
+            </div>
+            <div class="ctrl-refs">
+              <span class="refs-lbl">References:</span>
+              <span class="rtag llm">LLM06 — Excessive Agency</span>
+              <span class="rtag llm">LLM08 — Excessive Permissions</span>
+              <span class="rtag nist">SSDF PW.4</span>
+              <span class="rtag nist">SSDF RV.3</span>
+              <span class="rtag slsa">SLSA L4 — Hermetic Build</span>
+            </div>
+          </div>
+        </td></tr>
+
+        <!-- ── T-04 ── -->
+        <tr><td colspan="4">
+          <div class="ctrl-trigger" onclick="toggleRow(this)">
+            <span class="chevron">▶</span>
+            <span class="ctrl-tid">T-04</span>
+            <span class="ctrl-tname">MCP Server Compromise Leading to Pipeline Takeover</span>
+            <span class="sev-badge critical" style="margin-left:auto;flex-shrink:0;">Critical</span>
+          </div>
+          <div class="ctrl-body">
+            <div class="ctrl-cols">
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd pv">Preventive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Implement mutual TLS (mTLS) authentication between orchestration agents and all MCP servers; reject any tool registration from unauthenticated endpoints</li>
+                  <li>Cryptographically sign MCP tool schemas at publication time; verify signatures against a trusted key before loading into agent tool registry</li>
+                  <li>Maintain allowlists of permitted MCP server identities, tool namespaces, and schema versions; enforce deny-by-default for new registrations requiring explicit approval</li>
+                  <li>Isolate MCP server processes with network and filesystem sandboxing; restrict egress to expected upstream systems only via enforced network policy</li>
+                  <li>Implement tool call rate limiting and response size limits per MCP server to constrain exploitation surface</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd dt">Detective Controls</div>
+                <ul class="ctrl-list">
+                  <li>Audit all MCP tool invocations with full request/response logging in tamper-evident storage; retain for cross-session correlation and incident investigation</li>
+                  <li>Detect schema drift in MCP tool definitions by comparing registered schemas against cryptographically verified last-known-good baselines on each pipeline start</li>
+                  <li>Monitor for unexpected tool calls or response patterns inconsistent with the current pipeline stage and declared agent task</li>
+                  <li>Alert on MCP server certificate changes, DNS record modifications, or network endpoint alterations outside the approved change window</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd rs">Responsive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Immediately deregister compromised MCP server from all agent tool registries; halt all dependent pipeline runs and block new agent sessions from registering the server</li>
+                  <li>Roll back any infrastructure or configuration changes that were initiated during the compromised MCP interaction window</li>
+                  <li>Conduct full forensic audit of all tool calls executed via the compromised MCP endpoint; reconstruct the full agent action sequence</li>
+                  <li>Re-validate and rotate all agent-accessible secrets and credentials that were within scope during the incident window</li>
+                </ul>
+              </div>
+            </div>
+            <div class="ctrl-refs">
+              <span class="refs-lbl">References:</span>
+              <span class="rtag llm">LLM07 — System Prompt Leakage</span>
+              <span class="rtag llm">LLM06 — Excessive Agency</span>
+              <span class="rtag nist">SSDF PW.4</span>
+              <span class="rtag nist">SSDF RV.1</span>
+              <span class="rtag slsa">SLSA L3 — Non-falsifiable Provenance</span>
+            </div>
+          </div>
+        </td></tr>
+
+        <!-- ── T-05 ── -->
+        <tr><td colspan="4">
+          <div class="ctrl-trigger" onclick="toggleRow(this)">
+            <span class="chevron">▶</span>
+            <span class="ctrl-tid">T-05</span>
+            <span class="ctrl-tname">AI-Generated IaC with Embedded Backdoor Secrets</span>
+            <span class="sev-badge medium" style="margin-left:auto;flex-shrink:0;">Medium</span>
+          </div>
+          <div class="ctrl-body">
+            <div class="ctrl-cols">
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd pv">Preventive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Enforce pre-commit secret scanning (Gitleaks, TruffleHog, git-secrets) as blocking hard gates on all AI-generated file commits; zero-tolerance for credential-pattern matches</li>
+                  <li>Apply IaC-specific static analysis (Checkov, tfsec, KICS) as mandatory pipeline gates before any Terraform plan or CloudFormation deploy operation is permitted</li>
+                  <li>Require all agent-generated IaC to pass CIS Benchmark compliance checks and organization-specific policy-as-code before deployment approval is granted</li>
+                  <li>Prohibit hardcoded values for credential-class fields in IaC templates; enforce parameterization with secrets manager references (AWS Secrets Manager, HashiCorp Vault) via linting rules</li>
+                  <li>Generate AIBOM for all agent-assisted pipeline runs; log model version, prompt hash, and generation timestamp as immutable provenance for every IaC artifact produced</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd dt">Detective Controls</div>
+                <ul class="ctrl-list">
+                  <li>Continuously scan deployed infrastructure against approved configuration baselines using cloud-native tooling (AWS Security Hub, GCP Security Command Center) with IaC origin tagging</li>
+                  <li>Correlate deployed resource configurations with their generating IaC artifacts to maintain audit chain integrity and detect post-deploy tampering</li>
+                  <li>Monitor for public exposure of resources designated as private: S3 Block Public Access violations, GCS uniform bucket-level access bypass, public RDS snapshots</li>
+                  <li>Detect IAM policies with wildcard actions (<code>*</code>), overly broad resource scopes, or missing condition constraints in agent-generated IaC before and after deployment</li>
+                </ul>
+              </div>
+              <div class="ctrl-col">
+                <div class="ctrl-col-hd rs">Responsive Controls</div>
+                <ul class="ctrl-list">
+                  <li>Immediately apply restrictive SCPs or Organization Policies to contain exposed resources; block all public access at the organization level pending investigation</li>
+                  <li>Rotate any credentials that were hardcoded in deployed IaC; cross-reference access logs for evidence of unauthorized use during the exposure window</li>
+                  <li>Destroy and re-provision affected infrastructure from validated, policy-compliant IaC templates with full audit trail; do not attempt in-place remediation of compromised resources</li>
+                  <li>Update IaC generation agent system prompts and add explicit IaC linting rules to prohibit the identified anti-patterns from recurrence</li>
+                </ul>
+              </div>
+            </div>
+            <div class="ctrl-refs">
+              <span class="refs-lbl">References:</span>
+              <span class="rtag llm">LLM02 — Insecure Output Handling</span>
+              <span class="rtag llm">LLM09 — Overreliance</span>
+              <span class="rtag nist">SSDF PW.1</span>
+              <span class="rtag nist">SSDF PS.1</span>
+              <span class="rtag slsa">SLSA L2 — Hosted Build Platform</span>
+            </div>
+          </div>
+        </td></tr>
+
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ──────────────────── § 4 GUARDRAILS ───────────────────────────── -->
+  <section class="section" id="guardrails">
+    <div class="section-header">
+      <span class="section-num">§ 4.0</span>
+      <h2 class="section-title">Implementation Guardrails</h2>
+    </div>
+    <p class="section-desc">Prescriptive, production-actionable security controls for teams deploying autonomous AI agents in DevSecOps pipelines. Each guardrail maps directly to threats identified in § 2.0.</p>
+
+    <div class="guard-grid">
+
+      <!-- G-01 -->
+      <div class="guard-card">
+        <div class="guard-tag">G-01 / Static Analysis Gates</div>
+        <div class="guard-title">Static Analysis Gates on AI-Generated Code</div>
+        <div class="guard-desc">All code produced by AI agents must pass a mandatory static analysis gate before merge or deployment. Gates must be enforced as branch protection rules — not advisory checks — and must cover security vulnerabilities, AI-specific anti-patterns, and credential material. Agents must not be able to self-approve their own outputs.</div>
+        <ul class="guard-steps">
+          <li><span class="sn">01</span><span>Integrate SAST tooling (Semgrep, CodeQL, Snyk Code) as required status checks on all AI-assisted branches with non-zero exit codes blocking merge</span></li>
+          <li><span class="sn">02</span><span>Define AI-specific rulesets targeting hallucinated stdlib patterns, deprecated API usage, credential anti-patterns, and insecure default configurations</span></li>
+          <li><span class="sn">03</span><span>Configure zero-tolerance exit codes on critical severity findings; automate PR blocking via branch protection API — no manual override path for agent-submitted code</span></li>
+          <li><span class="sn">04</span><span>Run IaC scanners (Checkov, tfsec) in parallel with SAST; map findings to CIS/NIST control IDs in structured reports attached to the PR</span></li>
+          <li><span class="sn">05</span><span>Store all scan results as immutable pipeline artifacts with cryptographic link to the AIBOM record of the generating agent session</span></li>
+        </ul>
+        <div class="code-block"><span class="cm"># .github/workflows/ai-sast-gate.yml</span>
+<span class="ky">on</span>: [pull_request]
+<span class="ky">jobs</span>:
+  <span class="ky">ai-code-gate</span>:
+    <span class="ky">runs-on</span>: <span class="vl">ubuntu-latest</span>
+    <span class="ky">permissions</span>:
+      <span class="ky">contents</span>: <span class="vl">read</span>        <span class="cm"># minimal — no write</span>
+      <span class="ky">security-events</span>: <span class="vl">write</span>  <span class="cm"># SARIF upload only</span>
+    <span class="ky">steps</span>:
+      - <span class="ky">uses</span>: <span class="vl">semgrep/semgrep-action@v1</span>
+        <span class="ky">with</span>: { <span class="ky">config</span>: <span class="st">"p/ai-generated-code-security"</span> }
+      - <span class="ky">run</span>: <span class="vl">checkov -d . --framework all --hard-fail-on HIGH</span></div>
+      </div>
+
+      <!-- G-02 -->
+      <div class="guard-card">
+        <div class="guard-tag">G-02 / Dependency Validation</div>
+        <div class="guard-title">Dependency Validation Pipeline (OSSPolicyGuard Pattern)</div>
+        <div class="guard-desc">Every dependency suggested or introduced by an AI agent must traverse a multi-signal validation pipeline before installation. The OSSPolicyGuard pattern applies policy-as-code evaluation across package existence, reputation signals, vulnerability status, and provenance attestation — blocking agent-initiated installs that fail policy thresholds.</div>
+        <ul class="guard-steps">
+          <li><span class="sn">01</span><span>Verify package existence and canonical name on target registry before any install operation; reject non-existent packages without human escalation</span></li>
+          <li><span class="sn">02</span><span>Evaluate OpenSSF Scorecard score, publish date, maintainer count, and download velocity as weighted risk signals against configurable policy thresholds</span></li>
+          <li><span class="sn">03</span><span>Cross-reference against OSV, NVD, and GitHub Advisory databases; block packages with CVSS ≥ 7.0 vulnerabilities without explicit documented exception</span></li>
+          <li><span class="sn">04</span><span>Require SLSA provenance attestation (L2+) for all new production dependencies; reject packages lacking verifiable build provenance</span></li>
+          <li><span class="sn">05</span><span>Route failed validations to human security reviewer with full risk report; log all decisions with agent session ID for traceability</span></li>
+        </ul>
+        <div class="code-block"><span class="cm"># OSSPolicyGuard policy — policy.rego</span>
+<span class="ky">package</span> <span class="vl">ai_dependency_policy</span>
+<span class="ky">default</span> <span class="op">allow</span> = <span class="vl">false</span>
+
+<span class="ky">deny</span>[msg] {
+  input.pkg.publish_days &lt; <span class="vl">30</span>
+  msg := <span class="st">"Package age &lt;30d: hallucination risk"</span>
+}
+<span class="ky">deny</span>[msg] {
+  <span class="op">not</span> input.pkg.registry_verified
+  msg := <span class="st">"Package not in approved registry"</span>
+}
+<span class="ky">deny</span>[msg] {
+  input.pkg.max_cvss &gt; <span class="vl">7.0</span>
+  msg := <span class="st">"CVE score exceeds policy threshold"</span>
+}</div>
+      </div>
+
+      <!-- G-03 -->
+      <div class="guard-card">
+        <div class="guard-tag">G-03 / Permission Boundaries</div>
+        <div class="guard-title">Agent Permission Boundaries — Least-Privilege Scoping</div>
+        <div class="guard-desc">Autonomous agents must operate under explicitly defined, minimally-scoped permission boundaries enforced at the platform level — not self-asserted by the agent or declared in system prompts. Permissions must be scoped to the minimum required for each specific pipeline stage and automatically expire at task completion.</div>
+        <ul class="guard-steps">
+          <li><span class="sn">01</span><span>Define agent permission profiles per pipeline role (read-only audit, write-on-branch, deploy-to-staging) as versioned policy-as-code artifacts reviewed by security team</span></li>
+          <li><span class="sn">02</span><span>Use GitHub Actions job-level <code>permissions:</code> blocks with minimum required scopes; explicitly set unused permissions to <code>none</code> — do not rely on defaults</span></li>
+          <li><span class="sn">03</span><span>Issue time-bounded OIDC tokens (TTL ≤ 15 minutes) for cloud operations; bind subject claim to specific repository, branch, and environment — reject overly broad subject claims</span></li>
+          <li><span class="sn">04</span><span>Enforce network egress allowlists for agent runner environments; deny all unlisted external endpoints via firewall rules independent of agent configuration</span></li>
+          <li><span class="sn">05</span><span>Implement automated permission drift detection: continuously compare effective agent permissions against declared baseline; alert and block on any excess</span></li>
+        </ul>
+        <div class="code-block"><span class="cm"># GitHub Actions least-privilege template</span>
+<span class="ky">permissions</span>:          <span class="cm"># job-level block</span>
+  <span class="ky">contents</span>:    <span class="vl">read</span>   <span class="cm"># read repo only</span>
+  <span class="ky">pull-requests</span>: <span class="vl">write</span> <span class="cm"># only if review agent</span>
+  <span class="ky">id-token</span>:    <span class="vl">none</span>   <span class="cm"># explicit OIDC deny</span>
+  <span class="ky">packages</span>:    <span class="vl">none</span>
+  <span class="ky">deployments</span>: <span class="vl">none</span>
+  <span class="ky">secrets</span>:     <span class="vl">none</span>   <span class="cm"># no secret inheritance</span></div>
+      </div>
+
+      <!-- G-04 -->
+      <div class="guard-card">
+        <div class="guard-tag">G-04 / Human-in-the-Loop</div>
+        <div class="guard-title">Human-in-the-Loop Checkpoints for High-Risk Actions</div>
+        <div class="guard-desc">Fully autonomous agent operation must be bounded by mandatory human review gates at defined risk thresholds. The high-risk action taxonomy must be maintained as a versioned, externally-enforced policy artifact — not embedded in agent prompts where it can be overridden by injection attacks.</div>
+        <ul class="guard-steps">
+          <li><span class="sn">01</span><span>Enumerate and version-control the high-risk action taxonomy: infrastructure destroy, secret rotation, permission grants, external publishing, cross-environment promotion</span></li>
+          <li><span class="sn">02</span><span>Implement platform-enforced approval gates using GitHub Environments with required reviewer assignments; agent cannot self-approve or bypass the environment gate</span></li>
+          <li><span class="sn">03</span><span>Surface agent confidence scores, reasoning chain, and relevant context to human reviewers in structured, actionable format — not raw LLM output</span></li>
+          <li><span class="sn">04</span><span>Implement time-boxed automatic escalation: if no human response within defined SLA window, automatically block the action and page on-call security engineer</span></li>
+          <li><span class="sn">05</span><span>Log all human approval and rejection decisions with rationale and reviewer identity; include in AIBOM as part of the immutable audit trail for compliance reporting</span></li>
+        </ul>
+      </div>
+
+      <!-- G-05 -->
+      <div class="guard-card">
+        <div class="guard-tag">G-05 / AIBOM</div>
+        <div class="guard-title">AIBOM — AI Bill of Materials for Agent-Assisted Pipelines</div>
+        <div class="guard-desc">All pipeline artifacts produced with AI agent assistance must be accompanied by an AI Bill of Materials (AIBOM) documenting the AI components, model versions, prompt templates, and tool configurations involved in their generation. AIBOM enables reproducibility, compliance audit, and post-incident forensic investigation.</div>
+        <ul class="guard-steps">
+          <li><span class="sn">01</span><span>Record model name, version, API endpoint, temperature, and max tokens for every agent invocation; store as structured metadata alongside produced artifacts</span></li>
+          <li><span class="sn">02</span><span>Compute and store a cryptographic hash (SHA-256) of the system prompt, tool configuration, and memory state at time of invocation — treat prompt changes as security-relevant events</span></li>
+          <li><span class="sn">03</span><span>Link AIBOM records to produced artifacts using in-toto attestation framework; embed attestation in artifact metadata or publish to transparency log</span></li>
+          <li><span class="sn">04</span><span>Include AIBOM alongside traditional SBOM in all release manifests; expose both as queryable APIs for downstream consumers and compliance tooling</span></li>
+          <li><span class="sn">05</span><span>Require AIBOM verification as a hard deployment gate for regulated environments (FedRAMP, PCI DSS, ISO 27001, SOC 2 Type II)</span></li>
+        </ul>
+        <div class="code-block"><span class="cm"># AIBOM attestation (in-toto / SLSA predicate)</span>
+<span class="ky">_type</span>: <span class="st">"https://in-toto.io/Statement/v0.1"</span>
+<span class="ky">subject</span>: [{ <span class="ky">name</span>: <span class="st">"artifact.tar.gz"</span>, <span class="ky">digest</span>: { <span class="ky">sha256</span>: <span class="st">"..."</span> }}]
+<span class="ky">predicateType</span>: <span class="st">"https://aibom.dev/predicate/v0.1"</span>
+<span class="ky">predicate</span>:
+  <span class="ky">model</span>:       <span class="vl">&lt;model&gt;@&lt;version&gt;</span>
+  <span class="ky">promptHash</span>: <span class="st">"sha256:3f8a9c..."</span>
+  <span class="ky">toolConfig</span>: <span class="st">"sha256:9c2b1d..."</span>
+  <span class="ky">invokedAt</span>:  <span class="vl">2026-08-08T00:00:00Z</span>
+  <span class="ky">reviewer</span>:   <span class="st">"human-approved"</span></div>
+      </div>
+
+      <!-- G-06 -->
+      <div class="guard-card">
+        <div class="guard-tag">G-06 / MCD Pattern</div>
+        <div class="guard-title">Malicious Code Detection at Pipeline Ingestion Points</div>
+        <div class="guard-desc">The Malicious Code Detection (MCD) pattern mandates independent inspection of all AI-generated artifacts at each pipeline ingestion boundary before processing. This defense-in-depth layer operates independently of the agent's own security assessments — closing the gap where a compromised agent cannot detect its own malicious outputs.</div>
+        <ul class="guard-steps">
+          <li><span class="sn">01</span><span>Deploy independent MCD hooks at every pipeline ingestion boundary: commit, PR merge, artifact upload, and deployment trigger — no boundary is exempt</span></li>
+          <li><span class="sn">02</span><span>Run multi-engine scanning in independent parallel tracks: SAST, secret detection, malware signature matching, and behavioral analysis — store each engine's results separately</span></li>
+          <li><span class="sn">03</span><span>Apply behavioral analysis to IaC artifacts: detect exfiltration patterns (unexpected data sinks), unusual outbound connection specifications, and anomalous IAM constructs</span></li>
+          <li><span class="sn">04</span><span>Apply Shannon entropy analysis to all AI-generated files to detect potential encoded payloads, obfuscated strings, or compressed malware embedded in generated content</span></li>
+          <li><span class="sn">05</span><span>Cross-correlate MCD findings with AIBOM records to identify whether specific model versions, prompt configurations, or agent sessions are associated with elevated detection rates</span></li>
+        </ul>
+        <div class="code-block"><span class="cm"># MCD pipeline hook configuration</span>
+<span class="ky">hooks</span>:
+  <span class="ky">pre-merge</span>:
+    - <span class="vl">trufflehog filesystem . --entropy-threshold=4.5</span>
+    - <span class="vl">semgrep --config=p/malicious-code --error</span>
+    - <span class="vl">checkov -d . --framework=all --hard-fail-on HIGH</span>
+    - <span class="vl">gitleaks detect --source . --exit-code 1</span>
+  <span class="ky">on-finding</span>:
+    <span class="ky">action</span>:  <span class="st">block_and_quarantine</span>
+    <span class="ky">notify</span>:  <span class="st">security-oncall</span>
+    <span class="ky">retain</span>:  <span class="st">90d</span>  <span class="cm"># forensic retention</span></div>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<div class="scan-line"></div>
+
+<!-- ════════════════════════════ FOOTER ══════════════════════════════ -->
+<footer class="site-footer">
+  <div class="foot-inner">
+    <span class="owasp-badge">OWASP</span>
+    <p class="foot-txt">Contributed to OWASP GenAI Working Group | Agentic AI Security Subgroup</p>
+    <p class="foot-txt">
+      <a href="https://github.com/OWASP/www-project-top-10-for-large-language-model-applications" target="_blank" rel="noopener">
+        github.com/OWASP/www-project-top-10-for-large-language-model-applications
+      </a>
+    </p>
+    <p class="foot-txt" style="margin-top:6px;">Version 0.1-draft &nbsp;·&nbsp; Status: Community Review &nbsp;·&nbsp; © OWASP Foundation &nbsp;·&nbsp; Licensed CC BY-SA 4.0</p>
+  </div>
+</footer>
+
+<div class="toast" id="toast">✓ Markdown copied to clipboard</div>
+
+<!-- ════════════════════════════ SCRIPTS ═════════════════════════════ -->
+<script>
+  /* ── Severity filter ─────────────────────────────────────────── */
+  document.querySelectorAll('.fbtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.fbtn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const f = btn.dataset.f;
+      document.querySelectorAll('.threat-card').forEach(card => {
+        const show = f === 'all' || card.dataset.sev === f;
+        if (show) {
+          card.classList.remove('hidden');
+          card.style.animation = 'none';
+          requestAnimationFrame(() => { card.style.animation = 'fadeUp 0.22s ease both'; });
+        } else {
+          card.classList.add('hidden');
+        }
+      });
+    });
+  });
+
+  /* ── Expandable control rows ─────────────────────────────────── */
+  function toggleRow(trigger) {
+    const body = trigger.nextElementSibling;
+    const isOpen = body.classList.contains('open');
+    // Collapse all
+    document.querySelectorAll('.ctrl-body').forEach(b => b.classList.remove('open'));
+    document.querySelectorAll('.ctrl-trigger').forEach(t => t.classList.remove('open'));
+    // Open clicked if it was closed
+    if (!isOpen) {
+      body.classList.add('open');
+      trigger.classList.add('open');
+    }
+  }
+
+  /* ── Copy as Markdown ────────────────────────────────────────── */
+  document.getElementById('copyBtn').addEventListener('click', () => {
+    const md = buildMarkdown();
+    const btn = document.getElementById('copyBtn');
+    const txt = document.getElementById('copyTxt');
+    const succeed = () => {
+      btn.classList.add('ok');
+      txt.textContent = 'Copied!';
+      showToast();
+      setTimeout(() => { btn.classList.remove('ok'); txt.textContent = 'Copy as Markdown'; }, 2600);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(md).then(succeed).catch(() => fallbackCopy(md, succeed));
+    } else {
+      fallbackCopy(md, succeed);
+    }
+  });
+
+  function fallbackCopy(text, cb) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.cssText = 'position:fixed;top:-9999px';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta); cb();
+  }
+
+  function showToast() {
+    const t = document.getElementById('toast');
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2600);
+  }
+
+  function buildMarkdown() {
+    return `# OWASP GenAI Agentic Security — Control Mapping Table
+
+> **Workstream:** Agentic AI Security | **Version:** 0.1-draft | **Status:** Draft for Community Review
+> **Submission Target:** OWASP GenAI GitHub / owasp-org/www-project-top-10-for-large-language-model-applications
+
+---
+
+## § 3.0 Control Mapping per Threat
+
+| ID | Threat Name | Sev | CVSS | Preventive Controls (summary) | Detective Controls (summary) | Responsive Controls (summary) | NIST SSDF | OWASP LLM Top 10 | SLSA |
+|----|-------------|-----|------|-------------------------------|------------------------------|-------------------------------|-----------|------------------|------|
+| T-01 | Prompt Injection via Code Review Feedback Loop | High | 8.1 | Sanitize PR metadata; enforce instruction hierarchy; LLM output classifiers; read-only agent access to PR data | Log context windows; monitor approval ratios; cross-validate vs SAST; detect injection signatures in output | Quarantine affected PRs; revoke write permissions; rotate secrets; replay with sanitized context | PW.1, RV.1 | LLM01, LLM06 | SLSA L2 |
+| T-02 | Hallucinated Dependency Supply Chain Attack | High | 8.4 | Registry allowlist validation; OSSPolicyGuard policy gates; cryptographic hash pinning; private mirror enforcement | SBOM diff on every agent dependency change; monitor low-history packages; multi-DB vuln scan; hook on post-install | Isolate compromised runners; rotate secrets; report to registry security; audit all downstream artifacts | PS.1, PS.3 | LLM09, LLM02 | SLSA L3 |
+| T-03 | Autonomous Agent Privilege Escalation in CI/CD | Critical | 9.1 | Least-privilege job-level permissions; OIDC audience + subject constraints; OPA/Kyverno policy enforcement; stage-segmented IAM roles | Audit OIDC token requests; cloud IAM activity monitoring; IAM Access Analyzer; correlate pipeline timeline to API logs | Revoke OIDC token and temp credentials; isolate runner; enumerate all actions under compromised role; emergency SCPs | PW.4, RV.3 | LLM06, LLM08 | SLSA L4 |
+| T-04 | MCP Server Compromise Leading to Pipeline Takeover | Critical | 9.3 | mTLS for all MCP servers; signed tool schemas; allowlisted server identities; network + filesystem sandbox; rate limiting | Audit all tool invocations; detect schema drift vs baselines; alert on endpoint/cert changes; analyze action sequences | Deregister compromised MCP server; roll back infrastructure changes; full forensic audit; rotate all in-scope secrets | PW.4, RV.1 | LLM07, LLM06 | SLSA L3 |
+| T-05 | AI-Generated IaC with Embedded Backdoor Secrets | Medium | 7.2 | Pre-commit secret scanning (Gitleaks, TruffleHog); IaC SAST gates (Checkov, tfsec); CIS Benchmark compliance; no hardcoded credentials; AIBOM provenance | Continuous infra drift detection; cloud-native misconfig tooling; audit chain correlation; public exposure monitoring; wildcard IAM detection | Apply restrictive SCPs; rotate hardcoded credentials; destroy and re-provision from clean templates; update agent prompts | PW.1, PS.1 | LLM02, LLM09 | SLSA L2 |
+
+---
+
+### Framework Reference Key
+
+| Tag | Framework | Scope |
+|-----|-----------|-------|
+| LLM01 | OWASP LLM Top 10 — Prompt Injection | Input validation, instruction hierarchy |
+| LLM02 | OWASP LLM Top 10 — Insecure Output Handling | Output sanitization, secret detection |
+| LLM06 | OWASP LLM Top 10 — Excessive Agency | Tool scoping, permission boundaries |
+| LLM07 | OWASP LLM Top 10 — System Prompt Leakage | Context isolation, MCP trust |
+| LLM08 | OWASP LLM Top 10 — Excessive Permissions | IAM scoping, least privilege |
+| LLM09 | OWASP LLM Top 10 — Overreliance | Human-in-the-loop, validation gates |
+| SSDF PW.1 | NIST SSDF — Design Software to Meet Security Requirements | Secure architecture, threat modeling |
+| SSDF PW.4 | NIST SSDF — Reuse Existing, Vetted Software | Supply chain, dependency validation |
+| SSDF PS.1 | NIST SSDF — Protect Code from Unauthorized Access | Artifact signing, access control |
+| SSDF PS.3 | NIST SSDF — Archive and Protect Each Software Release | SBOM, provenance, retention |
+| SSDF RV.1 | NIST SSDF — Identify and Confirm Vulnerabilities | Vulnerability scanning, SAST gates |
+| SSDF RV.3 | NIST SSDF — Analyze Vulnerabilities to Develop Remediations | Incident response, remediation |
+| SLSA L2 | SLSA Level 2 — Hosted Build Platform | Build provenance, hosted runners |
+| SLSA L3 | SLSA Level 3 — Hardened Build Platform | Isolated builds, non-falsifiable provenance |
+| SLSA L4 | SLSA Level 4 — Hermetic Build | Hermetic, reproducible builds |
+
+---
+
+*Generated from: OWASP GenAI Agentic Security — Threat Model & Control Mapping v0.1-draft*
+*Source: github.com/OWASP/www-project-top-10-for-large-language-model-applications*
+*License: CC BY-SA 4.0*
+`;
+  }
+</script>
+
+</body>
+</html>
