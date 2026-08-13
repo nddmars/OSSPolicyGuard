@@ -4,9 +4,9 @@
 
 **Primary success test:** a stranger can install the project, scan one dependency, understand the decision, and reproduce the result in under five minutes.
 
-This document is written so VS Code Copilot can implement one requirement group at a time. Each group includes behavior, acceptance criteria, focused Pytest expectations, and a verification gate.
+This document is structured so a developer can implement one requirement group at a time. Each group includes behavior, acceptance criteria, focused Pytest expectations, and a verification gate.
 
-## 1. Copilot execution protocol
+## 1. Developer execution protocol
 
 For every requirement group:
 
@@ -653,7 +653,7 @@ A requirement is complete only when:
 - errors and partial-data behavior are tested;
 - no live network dependency exists in the normal test suite;
 - compatibility and release impact are documented;
-- Copilot reports exact commands and results before moving on.
+- Developer reports exact commands and results before moving on.
 
 ## 18. First-release gate
 
