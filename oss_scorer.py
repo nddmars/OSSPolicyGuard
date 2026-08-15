@@ -2,6 +2,7 @@ import json
 import os
 import time
 import logging
+import warnings
 import yaml
 import pandas as pd
 import requests
@@ -449,6 +450,27 @@ class OSSConfig:
             self.config.setdefault('malicious_packages', {})
             self.config['malicious_packages'].setdefault('enabled', True)
             self.config['malicious_packages'].setdefault('auto_prohibit', True)
+
+            # Gap A fix: ensure scoring.thresholds always has defaults so a
+            # config.yaml missing the section never raises a KeyError downstream.
+            self.config['scoring'].setdefault('thresholds', {
+                'critical': 90,
+                'high':     80,
+                'medium':   70,
+                'low':      60,
+            })
+
+            # Gap D fix: warn when scoring weights don't sum to 100 so
+            # misconfiguration is surfaced early rather than silently skewing scores.
+            _weights = self.config['scoring']['weights']
+            _weight_total = sum(_weights.values())
+            if _weights and _weight_total != 100:
+                warnings.warn(
+                    f"scoring.weights sum to {_weight_total}, expected 100; "
+                    "scores may not be on a 0-100 scale",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
             # Environment variable overrides (higher priority than config.yaml)
             if os.environ.get('GITHUB_TOKEN'):
@@ -984,6 +1006,9 @@ class OSSScorer:
 
     def get_scorecard(self, repo_url: str) -> dict | None:
         """Fetch OpenSSF Scorecard security score using the provider contract."""
+        # Gap C fix: honour the scorecard.enabled flag before making any API call.
+        if not self.config.get('scorecard', {}).get('enabled', True):
+            return None
         response = self.scorecard_provider.fetch(repo_url)
         if response.is_success():
             return {
@@ -1320,13 +1345,19 @@ class OSSWorkflow:
                 and self.config.get('malicious_packages', {}).get('auto_prohibit', True)):
             return 0.0
 
+        # Gap B fix: read EPSS thresholds from config so operators can tune them;
+        # fall back to the module-level constants when not configured.
+        _epss_cfg = self.config.get('epss', {})
+        _epss_high = _epss_cfg.get('high_threshold', _EPSS_HIGH_THRESHOLD)
+        _epss_med  = _epss_cfg.get('med_threshold',  _EPSS_MED_THRESHOLD)
+
         cve_score = 100.0
         for cve in results.get('cve_data', {}).get('cves', []):
             epss = cve.get('epss', 0.0)
             severity = cve.get('severity', 'UNKNOWN')
-            if epss >= _EPSS_HIGH_THRESHOLD:
+            if epss >= _epss_high:
                 cve_score -= _DEDUCT_EPSS_HIGH
-            elif epss >= _EPSS_MED_THRESHOLD:
+            elif epss >= _epss_med:
                 cve_score -= _DEDUCT_EPSS_MED
             elif epss > 0:
                 cve_score -= _DEDUCT_EPSS_LOW

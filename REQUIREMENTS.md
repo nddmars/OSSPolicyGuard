@@ -4,7 +4,6 @@
 > | Badge | Meaning |
 > |---|---|
 > | ✅ | Implemented & tested |
-> | ⚠️ | Implemented — minor documented gap |
 > | ❌ | Not yet implemented (future roadmap) |
 
 ---
@@ -38,9 +37,9 @@
 | 2.7 | Per-feature `enabled` flag (OSV, malicious packages, geocoding, EPSS, scorecard) | ✅ | All features can be independently disabled via config |
 | 2.8 | Per-registry `enabled` flag for download count lookups | ✅ | Maven disabled by default (no public download API) |
 | 2.9 | Configurable scoring weights (activity, trust, security, community) | ✅ | `scoring.weights` in config.yaml |
-| 2.10 | Configurable approval thresholds (critical, high, medium, low) | ⚠️ | Present in `config.yaml` but no default set in `_load_config`; `KeyError` if section removed |
-| 2.11 | Configurable EPSS thresholds via config.yaml | ⚠️ | `epss.high_threshold`/`med_threshold` defined in YAML but code reads module-level constants instead |
-| 2.12 | `scorecard.enabled` flag respected before API call | ⚠️ | Flag is in config.yaml but `get_scorecard()` does not check it before making the HTTP call |
+| 2.10 | Configurable approval thresholds (critical, high, medium, low) | ✅ | `scoring.thresholds` defaults (90/80/70/60) set in `_load_config`; no `KeyError` if section omitted |
+| 2.11 | Configurable EPSS thresholds via config.yaml | ✅ | `_calculate_security_score` reads `epss.high_threshold`/`med_threshold` from config; falls back to constants |
+| 2.12 | `scorecard.enabled` flag respected before API call | ✅ | Guard added at top of `get_scorecard()` — returns `None` immediately when flag is `false` |
 
 ---
 
@@ -145,7 +144,7 @@
 | 8.3 | Return `None` gracefully when repo is not indexed (HTTP 404) | ✅ | Logged at INFO level |
 | 8.4 | Return `None` gracefully on network failure | ✅ | `requests.RequestException` caught |
 | 8.5 | Blend Scorecard into security score at 40% weight | ✅ | `0.6 × CVE_score + 0.4 × (scorecard × 10)` |
-| 8.6 | `scorecard.enabled` flag checked before making API call | ⚠️ | Flag defined in config.yaml; `get_scorecard()` does not currently check it |
+| 8.6 | `scorecard.enabled` flag checked before making API call | ✅ | Guard in `get_scorecard()` skips HTTP call and returns `None` when disabled |
 
 ---
 
@@ -181,7 +180,7 @@
 | 10.9 | **Community score** — GitHub star count (30% weight) | ✅ | >10K→100, >1K→80, >100→60, else→40 |
 | 10.10 | Community score falls back to single signal when only one is available | ✅ | Downloads-only or stars-only handled separately |
 | 10.11 | Weighted total score using configurable weights from config.yaml | ✅ | `scoring.weights`: activity=30%, trust=20%, security=35%, community=15% |
-| 10.12 | Score weights must sum to 100 | ⚠️ | Not enforced in code; misconfiguration would silently produce wrong totals |
+| 10.12 | Score weights must sum to 100 | ✅ | `_load_config` emits `UserWarning` with actual sum when weights don't add to 100 |
 | 10.13 | Issue / PR response time metric | ❌ | Future roadmap |
 | 10.14 | Release cadence analysis | ❌ | Future roadmap |
 | 10.15 | Commit frequency metric (separate from staleness) | ❌ | Future roadmap |
@@ -226,7 +225,7 @@
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
-| 13.1 | Unit tests using `pytest` + `unittest.mock` | ✅ | 154 tests across 26 test classes |
+| 13.1 | Unit tests using `pytest` + `unittest.mock` | ✅ | 163 tests across 30 test classes |
 | 13.2 | Config loading tests (defaults, env overrides, missing file) | ✅ | `TestOSSConfig` — 4 tests |
 | 13.3 | GitHub URL parsing tests (valid, malformed, edge cases) | ✅ | `TestParseGitHubOwnerRepo` — 6 tests |
 | 13.4 | Header building tests | ✅ | `TestBuildHeaders` — 4 tests |
@@ -251,8 +250,12 @@
 | 13.23 | OSV advisory parsing tests (MAL-, GHSA, CVE alias deduplication) | ✅ | `TestCheckOsv` — 11 tests |
 | 13.24 | OSV security score effect tests | ✅ | `TestOsvSecurityScoreEffect` — 6 tests |
 | 13.25 | End-to-end malicious package PROHIBITED override test | ✅ | `TestEvaluateMaliciousComponent` — 2 tests |
-| 13.26 | Integration / end-to-end tests with real API calls | ❌ | Future roadmap (requires API keys and network) |
-| 13.27 | Performance / load tests | ❌ | Future roadmap |
+| 13.26 | Config thresholds default values test | ✅ | `TestConfigThresholdsDefault` — 2 tests |
+| 13.27 | EPSS config threshold override test | ✅ | `TestEpssConfigThresholds` — 3 tests |
+| 13.28 | Scorecard enabled flag test | ✅ | `TestScorecardEnabledFlag` — 2 tests |
+| 13.29 | Score weights sum validation warning test | ✅ | `TestWeightsSumWarning` — 2 tests |
+| 13.30 | Integration / end-to-end tests with real API calls | ❌ | Future roadmap (requires API keys and network) |
+| 13.31 | Performance / load tests | ❌ | Future roadmap |
 
 ---
 
@@ -277,4 +280,4 @@
 
 ---
 
-*Last updated: 2026-08-13 — reflects implementation as of commit on `feature/requirements-doc`.*
+*Last updated: 2026-08-15 — all previously documented gaps resolved; 163 tests passing.*

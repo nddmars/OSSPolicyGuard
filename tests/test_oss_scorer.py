@@ -1422,3 +1422,147 @@ class TestEvaluateMaliciousComponent:
 
         assert result.get('is_malicious') is None  # key absent when not malicious
         assert result['approval'] != 'PROHIBITED'
+
+
+# ---------------------------------------------------------------------------
+# Gap A: scoring.thresholds default values
+# ---------------------------------------------------------------------------
+
+class TestConfigThresholdsDefault:
+    """Gap A — _load_config() must supply thresholds defaults when the YAML omits them."""
+
+    def test_thresholds_populated_when_section_absent(self, tmp_path, monkeypatch):
+        """Config without a thresholds section gets the standard defaults."""
+        (tmp_path / 'config.yaml').write_text(
+            "scoring:\n  weights:\n    activity: 30\n    trust: 20\n    security: 35\n    community: 15\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        from oss_scorer import OSSConfig
+        cfg = OSSConfig().config
+        assert cfg['scoring']['thresholds'] == {
+            'critical': 90, 'high': 80, 'medium': 70, 'low': 60
+        }
+
+    def test_thresholds_preserved_when_explicitly_set(self, tmp_path, monkeypatch):
+        """Custom threshold values are not overwritten by defaults."""
+        (tmp_path / 'config.yaml').write_text(
+            "scoring:\n  weights:\n    activity: 30\n    trust: 20\n    security: 35\n    community: 15\n"
+            "  thresholds:\n    critical: 95\n    high: 85\n    medium: 75\n    low: 65\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        from oss_scorer import OSSConfig
+        cfg = OSSConfig().config
+        assert cfg['scoring']['thresholds']['critical'] == 95
+        assert cfg['scoring']['thresholds']['high'] == 85
+
+
+# ---------------------------------------------------------------------------
+# Gap B: EPSS thresholds read from config
+# ---------------------------------------------------------------------------
+
+class TestEpssConfigThresholds:
+    """Gap B — _calculate_security_score must honour epss.high_threshold / epss.med_threshold from config."""
+
+    def test_default_epss_threshold_applied(self):
+        """With no epss config, default high threshold (0.5) is used."""
+        wf = _make_workflow()
+        # EPSS = 0.6 → >= default high threshold (0.5) → -15 deducted
+        result = wf._calculate_security_score({
+            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.6, 'id': 'CVE-1'}]},
+            'osv_data': {'is_malicious': False, 'extra_advisories': 0},
+        })
+        assert result == 85.0  # 100 - 15
+
+    def test_custom_high_threshold_shifts_cutoff(self):
+        """When high_threshold=0.8 in config, epss=0.6 is only 'medium' risk."""
+        cfg = {
+            **MINIMAL_CONFIG,
+            'epss': {'enabled': True, 'timeout': 10, 'high_threshold': 0.8, 'med_threshold': 0.1},
+        }
+        wf = _make_workflow(cfg)
+        # EPSS = 0.6 is below high (0.8) but above med (0.1) → -8 instead of -15
+        result = wf._calculate_security_score({
+            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.6, 'id': 'CVE-1'}]},
+            'osv_data': {'is_malicious': False, 'extra_advisories': 0},
+        })
+        assert result == 92.0  # 100 - 8
+
+    def test_custom_med_threshold_shifts_cutoff(self):
+        """When med_threshold=0.3, epss=0.2 falls below it → only low-risk deduction."""
+        cfg = {
+            **MINIMAL_CONFIG,
+            'epss': {'enabled': True, 'timeout': 10, 'high_threshold': 0.5, 'med_threshold': 0.3},
+        }
+        wf = _make_workflow(cfg)
+        # EPSS = 0.2 < med_threshold (0.3) but > 0 → -2 (low)
+        result = wf._calculate_security_score({
+            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.2, 'id': 'CVE-1'}]},
+            'osv_data': {'is_malicious': False, 'extra_advisories': 0},
+        })
+        assert result == 98.0  # 100 - 2
+
+
+# ---------------------------------------------------------------------------
+# Gap C: scorecard.enabled flag respected
+# ---------------------------------------------------------------------------
+
+class TestScorecardEnabledFlag:
+    """Gap C — get_scorecard() must return None immediately when scorecard.enabled is false."""
+
+    def test_scorecard_disabled_returns_none_without_http_call(self):
+        cfg = {**MINIMAL_CONFIG, 'scorecard': {'enabled': False, 'timeout': 10}}
+        scorer = _make_scorer(cfg)
+        with patch('oss_scorer.requests.get') as mock_get:
+            result = scorer.get_scorecard('https://github.com/owner/repo')
+        assert result is None
+        mock_get.assert_not_called()
+
+    def test_scorecard_enabled_makes_http_call(self):
+        cfg = {**MINIMAL_CONFIG, 'scorecard': {'enabled': True, 'timeout': 5}}
+        scorer = _make_scorer(cfg)
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            'score': 7.5,
+            'checks': [],
+            'repo': {'name': 'github.com/owner/repo'},
+        }
+        with patch('oss_scorer.requests.get', return_value=mock_resp):
+            result = scorer.get_scorecard('https://github.com/owner/repo')
+        assert result is not None
+        assert result.get('score') == 7.5
+
+
+# ---------------------------------------------------------------------------
+# Gap D: scoring weights sum validation
+# ---------------------------------------------------------------------------
+
+class TestWeightsSumWarning:
+    """Gap D — _load_config() must emit a UserWarning when weights don't sum to 100."""
+
+    def test_weights_not_summing_to_100_triggers_warning(self, tmp_path, monkeypatch):
+        (tmp_path / 'config.yaml').write_text(
+            "scoring:\n  weights:\n    activity: 30\n    trust: 20\n    security: 35\n    community: 10\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        import warnings as _warnings
+        from oss_scorer import OSSConfig
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            OSSConfig()
+        user_warns = [w for w in caught if issubclass(w.category, UserWarning)]
+        assert user_warns, "Expected a UserWarning about weights sum"
+        assert "95" in str(user_warns[0].message)  # weights sum to 95
+
+    def test_weights_summing_to_100_no_warning(self, tmp_path, monkeypatch):
+        (tmp_path / 'config.yaml').write_text(
+            "scoring:\n  weights:\n    activity: 30\n    trust: 20\n    security: 35\n    community: 15\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        import warnings as _warnings
+        from oss_scorer import OSSConfig
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            OSSConfig()
+        user_warns = [w for w in caught if issubclass(w.category, UserWarning)
+                      and "scoring.weights" in str(w.message)]
+        assert not user_warns, f"Unexpected UserWarning: {user_warns}"
