@@ -259,25 +259,112 @@
 
 ---
 
-## 14. Future Enhancements
+## 14. Roadmap Items (no formal OPG requirement yet)
 
-| # | Requirement | Priority | Description |
-|---|---|---|---|
-| 14.1 | License compliance detection | High | Identify OSS license (MIT, GPL, Apache) and flag copyleft risk for commercial use |
-| 14.2 | Transitive dependency analysis | High | Extend CVE/OSV checks to the full dependency tree, not just the direct package |
-| 14.3 | Audit trail persistence | Medium | Store each `evaluate_component` result to a database or JSON log for historical tracking |
-| 14.4 | REST API / CLI interface | Medium | Expose evaluation pipeline as a standalone HTTP service or command-line tool |
-| 14.5 | CI/CD pipeline integration | Medium | GitHub Actions / Jenkins plugin to gate PRs on OSS policy score |
-| 14.6 | JIRA / Slack / Teams notifications | Medium | Alert on PROHIBITED or MITIGATION REQUIRED outcomes |
-| 14.7 | GitLab / Bitbucket support | Medium | Extend `GitHubProvider` to support alternative SCM platforms |
-| 14.8 | Release cadence scoring | Low | Penalise packages with no releases in >12 months |
-| 14.9 | Issue/PR response time metric | Low | Score maintainer responsiveness from GitHub issue timelines |
-| 14.10 | Commit frequency metric | Low | Separate from last-commit staleness; scores development activity intensity |
-| 14.11 | Multi-package batch evaluation | Low | Accept a `requirements.txt` / `package.json` and score all dependencies at once |
-| 14.12 | Historical trend dashboard | Low | Track how a package's score changes over time |
-| 14.13 | HTML / PDF report export | Low | Generate shareable evaluation reports outside Jupyter |
-| 14.14 | Maven download count | Low | Pending a public Maven Central download statistics API |
+Items without an OPG-* number are unscheduled backlog entries. Items that now have a formal
+requirement are listed with their OPG ID.
+
+| # | Requirement | Priority | OPG Ref | Notes |
+|---|---|---|---|---|
+| 14.1 | License compliance detection | High | OPG-133–138 | Formalised in section 15 |
+| 14.2 | Transitive dependency analysis | High | OPG-020 | Full graph via dependency graph construction |
+| 14.3 | Audit trail persistence | Medium | OPG-081 | Immutable audit log |
+| 14.4 | REST API / CLI interface | Medium | OPG-075 | Optional REST service |
+| 14.5 | CI/CD pipeline integration | Medium | OPG-073–074 | GitHub Action + CI templates |
+| 14.6 | JIRA / Slack / Teams notifications | Medium | — | No formal requirement yet |
+| 14.7 | GitLab / Bitbucket support | Medium | OPG-074 | Covered by reusable CI templates |
+| 14.8 | Release cadence scoring | Low | — | No formal requirement yet |
+| 14.9 | Issue/PR response time metric | Low | — | No formal requirement yet |
+| 14.10 | Commit frequency metric | Low | — | No formal requirement yet |
+| 14.11 | Multi-package batch evaluation | Low | OPG-068 | CLI manifest scan |
+| 14.12 | Historical trend dashboard | Low | — | No formal requirement yet |
+| 14.13 | HTML / PDF report export | Low | OPG-137 | Via license compliance report; general export roadmap |
+| 14.14 | Maven download count | Low | — | Pending public Maven Central API |
+| 14.15 | Package proxy / registry firewall | Medium | OPG-152 | Formalised in section 20 |
+| 14.16 | Automated fix PR creation | Medium | OPG-150 | Formalised in section 20 |
+| 14.17 | Container image scanning | Medium | OPG-151 | Formalised in section 20 |
 
 ---
 
-*Last updated: 2026-08-15 — all previously documented gaps resolved; 163 tests passing.*
+## 15. License Compliance
+
+| # | Requirement | Status | Notes |
+|---|---|---|---|
+| 15.1 | SPDX license detection (OPG-133) | ❌ | Identify declared license from registry metadata and package files; parse SPDX expressions; store canonical SPDX identifier per package |
+| 15.2 | Copyleft propagation analysis (OPG-134) | ❌ | Flag GPL-2/3, LGPL, AGPL, MPL, EPL; determine strong/weak copyleft applicability based on link type |
+| 15.3 | License compatibility matrix (OPG-135) | ❌ | Configurable compatibility matrix; flag incompatible combinations in the dependency graph; custom allow/deny rules |
+| 15.4 | Dual-license and commercial restriction detection (OPG-136) | ❌ | Detect dual-licensed packages with commercial fees or non-commercial-use clauses; surface as REVIEW finding |
+| 15.5 | License compliance report (OPG-137) | ❌ | Machine-readable report per component: license, compatibility verdict, applicable policy rule; JSON and Markdown outputs |
+| 15.6 | Attribution / NOTICE file generation (OPG-138) | ❌ | Aggregate copyright notices and license texts for all direct and transitive dependencies; suitable for distribution bundles |
+
+---
+
+## 16. Dependency Management — Extended
+
+| # | Requirement | Status | Notes |
+|---|---|---|---|
+| 16.1 | Dependency pinning policy enforcement (OPG-139) | ❌ | Flag manifests with floating ranges (^, ~, *, latest, >x); configurable allowed range styles per ecosystem; lockfile hash-pin requirement separately configurable |
+| 16.2 | End-of-life and formal deprecation tracking (OPG-140) | ❌ | Ingest official EOL dates from registry deprecation flags, endoflife.date API, and language-runtime schedules; surface as distinct REVIEW/PROHIBITED finding with exact EOL date |
+
+---
+
+## 17. Evidence Providers — Extended
+
+| # | Requirement | Status | Notes |
+|---|---|---|---|
+| 17.1 | Private registry provider (OPG-141) | ❌ | Support JFrog Artifactory, Sonatype Nexus, GitHub Packages, AWS CodeArtifact, Azure Artifacts, Google Artifact Registry; credentials never hard-coded |
+| 17.2 | Real-time new-version alerting (OPG-142) | ❌ | Subscribe to registry publication feeds (npm hooks, PyPI RSS, crates.io); emit typed event when watched package publishes a new version whose risk score exceeds the approved version by a configurable delta |
+| 17.3 | Maintainer account credibility scoring (OPG-143) | ❌ | Score account age, MFA status, prior release history, and organisational affiliation; separate from ownership-transfer detection (OPG-052) |
+
+---
+
+## 18. Supply Chain Defense — Extended
+
+| # | Requirement | Status | Notes |
+|---|---|---|---|
+| 18.1 | Static behavioral analysis of package source (OPG-144) | ❌ | AST-level analysis for outbound network calls, child-process spawning, filesystem writes, env-var exfiltration, dynamic evaluation; typed signal per behavior; never execute the code |
+| 18.2 | Phantom dependency detection (OPG-145) | ❌ | Cross-reference static import analysis of user project source against declared manifest; identify imports satisfied only by transitive or phantom packages |
+| 18.3 | Source-artifact binding via reproducible-build equivalence (OPG-146) | ❌ | Rebuild from declared source revision and compare digest to published artifact; report match, mismatch, or unverifiable with evidence |
+| 18.4 | Adversarial namespace squatting detection (OPG-147) | ❌ | Detect recently-registered packages (<30 days) closely matching a popular package name with no prior publisher history; configurable confidence thresholds |
+
+---
+
+## 19. Policy Engine — Extended
+
+| # | Requirement | Status | Notes |
+|---|---|---|---|
+| 19.1 | Cross-ecosystem vulnerability cascade modeling (OPG-148) [Research] | ❌ | Model CVE propagation from foundational C/C++ libraries (OpenSSL, zlib, libcurl) to wrapper packages across npm, PyPI, Ruby, Maven; aggregate cross-ecosystem blast-radius score; ground-truth labeled benchmark |
+
+---
+
+## 20. Outputs, APIs & Developer Integrations — Extended
+
+| # | Requirement | Status | Notes |
+|---|---|---|---|
+| 20.1 | SBOM generation for the analyzed project (OPG-149) | ❌ | Produce CycloneDX 1.5 or SPDX 2.3 SBOM of user's project enriched with policy decisions, CVSS, EPSS, and license data; validate against official schema; attach to CI artifacts |
+| 20.2 | Automated fix pull-request creation (OPG-150) | ❌ | When safe upgrade identified (OPG-038) and token configured, open dependency-update PR modifying manifest and lock file; PR body includes risk reduction summary and scan report link |
+| 20.3 | Container image and OS-package scanning (OPG-151) | ❌ | Accept container image reference or OCI tarball; extract OS package database (dpkg/rpm/apk); scan through same evidence providers and policy engine; report unified findings |
+| 20.4 | Package proxy / registry firewall mode (OPG-152) | ❌ | Operate as HTTPS proxy in front of public registry; evaluate policy before package enters build environment; block PROHIBITED packages with typed error response; log all interceptions |
+
+---
+
+## 21. Quality & Compliance — Extended
+
+| # | Requirement | Status | Notes |
+|---|---|---|---|
+| 21.1 | Compliance evidence packaging (OPG-153) | ❌ | Exportable evidence bundles for SOC 2 Type II (CC7.2/CC8.1), FedRAMP third-party component tracking, PCI-DSS SCA; machine-readable JSON + Markdown; includes scan date, policy digest, findings, remediation status |
+
+---
+
+## 22. Research — Extended
+
+| # | Requirement | Status | Notes |
+|---|---|---|---|
+| 22.1 | LLM-assisted novel malicious pattern recognition (OPG-154) [Research] | ❌ | Language model generates natural-language explanations for suspicious behaviors not covered by rule-based signals; calibrate against confirmed-malicious ground-truth corpus; publish precision/recall; no auto-enforcement without human review |
+| 22.2 | Runtime dependency inventory via instrumentation (OPG-155) [Research] | ❌ | Discover packages loaded in running Python or Node.js process via import hooks or eBPF tracing; compare runtime inventory to manifest; surface undeclared runtime dependencies as phantom-dependency findings |
+| 22.3 | Infrastructure-as-Code deployment context enrichment (OPG-156) [Research] | ❌ | Parse Terraform, Helm, Kubernetes manifests to determine deployment exposure (internet-facing, internal, batch-only); pass context to blast-radius model for environment-adjusted risk scores |
+| 22.4 | Hierarchical team-scoped catalog with delegated administration (OPG-157) | ❌ | BU security teams approve packages within enterprise policy envelope; application teams create scoped exceptions with rollup reporting; revocation cascades downward; all delegation actions in immutable audit log (OPG-081) |
+
+---
+
+*Last updated: 2026-08-15 — 25 new requirements added (OPG-133–157); 213 tests passing.*
