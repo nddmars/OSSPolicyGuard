@@ -8,6 +8,103 @@ OSSPolicyGuard does not infer maliciousness from maintainer nationality, ethnici
 
 The project follows a simple rule: higher scores are safer, and any penalty must be traceable to a concrete technical or policy signal.
 
+## Supported ecosystems
+
+| Ecosystem | Registry | Download counts | Notes |
+|-----------|----------|-----------------|-------|
+| npm / Node.js | npmjs.com | ✅ weekly | — |
+| Python | PyPI | ✅ weekly | — |
+| Ruby | RubyGems | ✅ estimated | Cumulative ÷ 52 |
+| Rust | crates.io | ✅ estimated | 90-day ÷ 13 |
+| .NET | NuGet | ✅ estimated | Total ÷ 104 |
+| PHP | Packagist | ✅ estimated | Monthly ÷ 4 |
+| Java / JVM | Maven Central | ❌ N/A | No public download API |
+
+## Decision semantics
+
+| Decision | Score range | Conditions | Action |
+|----------|-------------|------------|--------|
+| APPROVED | ≥ 80 | No hard blocks | Safe to use |
+| REVIEW REQUIRED | 60–79 | Advisory flags or low sub-scores | Manual review needed |
+| PROHIBITED | Any | Malicious package, critical exploit with active EPSS, or hard policy rule | Block immediately |
+
+A package with a high numeric score can still receive PROHIBITED if a hard-block condition is triggered (for example, a confirmed malicious-package flag or a KEV-listed vulnerability above the EPSS threshold).
+
+## Limitations
+
+- **Not a guarantee of safety.** Scores are probability signals, not certainty. A high score does not mean a package is safe; a low score does not mean it is dangerous.
+- **No transitive dependency analysis yet.** Only direct dependencies are evaluated. Transitive scanning is on the roadmap.
+- **No license compliance detection yet.** License identification is on the roadmap.
+- **Scorecard requires a public GitHub repository.** Packages without a detectable public repository receive a partial score on the supply-chain dimension.
+- **Download counts are weekly estimates.** Methodology varies by registry and is documented in the Supported ecosystems table above.
+- **Geolocation is opt-in only.** Geographic jurisdiction checks are excluded from default scores and must be explicitly configured in `config.yaml`.
+- **KEV / EPSS correlation requires network access.** Offline mode uses cached data only; cached data may be stale.
+
+## Quick start
+
+### Install
+
+```bash
+pip install -e '.[dev]'
+```
+
+### Scan a package
+
+```bash
+osspolicyguard scan requests --ecosystem pypi --format text
+```
+
+### JSON output
+
+```bash
+osspolicyguard scan express --ecosystem npm --format json
+```
+
+### SARIF output
+
+```bash
+osspolicyguard scan lodash --ecosystem npm --format sarif
+```
+
+### GitHub Actions
+
+A ready-to-use workflow lives at `.github/workflows/osspolicyguard-action.yml` and triggers on pull requests that touch `requirements.txt` or `package.json`. To add it to another repository:
+
+```yaml
+- uses: actions/checkout@v4
+- uses: actions/setup-python@v7
+  with:
+    python-version: '3.11'
+- run: pip install -e .
+- run: python scripts/osspolicyguard_action.py
+```
+
+### Configuration
+
+The scanner reads `config.yaml` at startup. A JSON Schema for editor validation is provided at `config.schema.json`. To enable a jurisdiction compliance check, set `geo_compliance: true` in the `risk` section; it is disabled by default.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | All packages APPROVED |
+| 1 | At least one package PROHIBITED |
+| 2 | At least one package REVIEW REQUIRED (when `--review-fails-ci` is set) |
+| 3 | Configuration error |
+| 4 | Provider or network error |
+| 99 | Unexpected internal error |
+
+## Scoring methodology
+
+Each package receives a composite score from 0 to 100 across four weighted dimensions:
+
+- **Security (35%)** — CVE severity, EPSS exploitability probability, KEV presence, OSV advisories, and malicious-package signals.
+- **Maintenance (30%)** — Commit recency, release cadence, open issue ratio, and bus-factor estimate.
+- **Supply-chain (20%)** — OpenSSF Scorecard sub-scores, provenance signals, and repository visibility.
+- **Community (15%)** — Download volume, dependent-package count, and contributor breadth.
+
+Hard blocks (malicious flag, critical CVE with active EPSS above threshold, explicit policy rule) override the numeric score and force a PROHIBITED decision regardless of total. See [REQUIREMENTS.md](REQUIREMENTS.md) for the full factor definitions, weight rationale, and threshold tables.
+
 ## Architecture
 
 ```text
@@ -19,76 +116,13 @@ Configurable policy engine
      ↓
 Score + evidence + approval decision
      ↓
-CLI / JSON / GitHub Action
+CLI / JSON / SARIF / GitHub Action
 ```
 
-## Quick start
+## Contributing
 
-### Install
+Contributions are welcome. Issues and pull requests are open. A `CONTRIBUTING.md` is coming soon with setup instructions, coding conventions, and the pull-request checklist.
 
-```bash
-python -m pip install -e .
-```
+## License
 
-### Scan one package
-
-```bash
-osspolicyguard scan express --ecosystem npm --criticality "Business Critical"
-```
-
-Example output:
-
-```text
-Package: express
-Score: 84/100
-Decision: APPROVED
-
-Security: 88
-Maintenance: 79
-Community: 91
-Supply-chain risk: 76
-Malicious package detected: No
-```
-
-### JSON output
-
-```bash
-osspolicyguard scan express --ecosystem npm --format json
-```
-
-### Configuration
-
-The scorer reads configuration from a local config.yaml file. A minimal example is included in the repository.
-
-To enable a separate compliance check, opt into the geo_compliance rule in the risk section; it is not active by default.
-
-## What it evaluates
-
-- GitHub repository metrics
-- NVD and EPSS-based vulnerability scoring
-- OSV advisory checks
-- Registry download and ecosystem signals
-- Malicious-package detection
-- Configurable policy thresholds and approval outcomes
-- Optional compliance-only geographic policies when explicitly configured
-
-## Current implementation status
-
-The project currently includes the core CLI, scoring flow, JSON output, and a security-first policy engine. The remaining work is tracked in the requirements status file and the roadmap document.
-
-## Development
-
-```bash
-python -m pip install -e .[dev]
-python -m pytest -q
-```
-
-## Roadmap
-
-The next milestones are:
-
-1. Finalize the remaining pending requirement in the requirements tracker
-2. Complete provider refactoring and stronger evidence reporting
-3. GitHub Action integration for PR review and policy enforcement
-
-
+MIT
