@@ -391,3 +391,245 @@ def test_redacting_filter_dict_preserves_non_str():
     rf.filter(record)
     assert record.args["count"] == 5, "Integer dict arg must not be coerced to str"
     assert record.args["token"] == "[REDACTED]"
+
+
+# ---------------------------------------------------------------------------
+# Round-4 findings
+# ---------------------------------------------------------------------------
+
+# Finding 2 (remaining P0) — Provider failures must not produce APPROVED
+# ---------------------------------------------------------------------------
+
+
+def test_all_security_providers_failed_cannot_be_approved():
+    """E2E: when NVD and OSV both fail, evaluate_component result is not APPROVED."""
+    workflow = _make_workflow()
+
+    # Simulate both NVD and OSV returning error status (no CVE/advisory data)
+    error_cve = {
+        'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0,
+        'epss_high': 0, 'max_epss': 0.0, 'cves': [],
+        'last_updated': None, 'status': 'error', 'error': 'timeout',
+    }
+    error_osv = {
+        'total': 0, 'malicious_count': 0, 'is_malicious': False,
+        'malicious_ids': [], 'extra_advisories': 0, 'advisories': [],
+        'last_updated': None, 'status': 'error', 'error': 'timeout',
+    }
+    error_dl = {
+        'weekly_downloads': None, 'period': 'unknown', 'registry': 'npm',
+        'status': 'error', 'error': 'timeout',
+    }
+
+    # Patch all three provider calls to return failures
+    import unittest.mock as mock
+    with mock.patch.object(workflow.scorer, 'check_cves', return_value=error_cve), \
+         mock.patch.object(workflow.scorer, 'check_osv', return_value=error_osv), \
+         mock.patch.object(workflow.scorer, 'get_download_count', return_value=error_dl):
+
+        result = workflow.evaluate_component({
+            'package_name': 'some-pkg',
+            'ecosystem': 'npm',
+            'criticality': 'Non-Critical',
+        })
+
+    assert result['approval'] != 'APPROVED', (
+        f"Expected REVIEW (not APPROVED) when providers fail, got {result['approval']!r}"
+    )
+    assert result['insufficient_data'] is True
+    # At least one warning must name a failed provider
+    warnings = result.get('warnings', [])
+    assert any('NVD' in w or 'OSV' in w for w in warnings), (
+        f"Expected provider failure warnings, got: {warnings}"
+    )
+
+
+def test_provider_failure_warnings_propagated():
+    """NVD failure adds a visible warning to the result."""
+    workflow = _make_workflow()
+
+    error_cve = {
+        'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0,
+        'epss_high': 0, 'max_epss': 0.0, 'cves': [],
+        'last_updated': None, 'status': 'error', 'error': 'connection refused',
+    }
+    ok_osv = {
+        'total': 0, 'malicious_count': 0, 'is_malicious': False,
+        'malicious_ids': [], 'extra_advisories': 0, 'advisories': [],
+        'last_updated': '2026-01-01T00:00:00', 'status': 'success', 'error': None,
+    }
+
+    import unittest.mock as mock
+    with mock.patch.object(workflow.scorer, 'check_cves', return_value=error_cve), \
+         mock.patch.object(workflow.scorer, 'check_osv', return_value=ok_osv), \
+         mock.patch.object(workflow.scorer, 'get_download_count', return_value={
+             'weekly_downloads': 50000, 'period': 'weekly', 'registry': 'npm',
+             'status': 'success', 'error': None,
+         }):
+
+        result = workflow.evaluate_component({
+            'package_name': 'some-pkg',
+            'ecosystem': 'npm',
+            'criticality': 'Non-Critical',
+        })
+
+    assert any('NVD' in w for w in result.get('warnings', [])), (
+        f"Expected NVD warning, got: {result.get('warnings')}"
+    )
+    assert result['insufficient_data'] is True
+
+
+def test_no_provider_failures_no_insufficient_data():
+    """When all providers succeed, insufficient_data must be False."""
+    workflow = _make_workflow()
+
+    ok_cve = {
+        'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0,
+        'epss_high': 0, 'max_epss': 0.0, 'cves': [],
+        'last_updated': '2026-01-01', 'status': 'success', 'error': None,
+    }
+    ok_osv = {
+        'total': 0, 'malicious_count': 0, 'is_malicious': False,
+        'malicious_ids': [], 'extra_advisories': 0, 'advisories': [],
+        'last_updated': '2026-01-01', 'status': 'success', 'error': None,
+    }
+
+    import unittest.mock as mock
+    with mock.patch.object(workflow.scorer, 'check_cves', return_value=ok_cve), \
+         mock.patch.object(workflow.scorer, 'check_osv', return_value=ok_osv), \
+         mock.patch.object(workflow.scorer, 'get_download_count', return_value={
+             'weekly_downloads': 50000, 'period': 'weekly', 'registry': 'npm',
+             'status': 'success', 'error': None,
+         }):
+
+        result = workflow.evaluate_component({
+            'package_name': 'some-pkg',
+            'ecosystem': 'npm',
+            'criticality': 'Non-Critical',
+        })
+
+    assert result['insufficient_data'] is False
+    assert result['approval'] in {'APPROVED', 'REVIEW', 'PROHIBITED'}
+
+
+# Finding 5 (remaining P1) — Geography is fully separated from technical score
+# ---------------------------------------------------------------------------
+
+
+def test_trust_score_never_includes_geo():
+    """_calculate_trust_score never blends geo — even when geo_compliance is enabled."""
+    from oss_scorer import OSSWorkflow
+
+    # Build a workflow with geo explicitly enabled
+    geo_config = {
+        **MINIMAL_CONFIG,
+        'risk': {
+            'geo_compliance': {
+                'enabled': True,
+                'high_risk_countries': ['XX'],
+            }
+        }
+    }
+    workflow = _make_workflow()
+    workflow.config = geo_config
+
+    results_with_geo = {
+        'github_metrics': {'forks': 10_000},
+        # 100% high-risk contributors — would drag trust to 0 if blended
+        'contributor_locations': [
+            {'country_code': 'XX', 'contributions': 1000},
+        ],
+    }
+    score = workflow._calculate_trust_score(results_with_geo)
+    # Trust must equal maturity (100) regardless of contributor locations
+    assert score == 100.0, (
+        f"Trust score must equal maturity (100), not blend geo; got {score}"
+    )
+
+
+def test_evaluate_component_geo_compliance_separate_section():
+    """When geo is enabled, compliance.geo_jurisdiction appears without affecting trust."""
+    workflow = _make_workflow()
+
+    # Enable geo compliance in the workflow config
+    import copy
+    workflow.config = copy.deepcopy(MINIMAL_CONFIG)
+    workflow.config['risk'] = {
+        'geo_compliance': {
+            'enabled': True,
+            'high_risk_countries': ['XX'],
+        }
+    }
+    # Also update scorer config so _calculate_geo_risk_score uses correct cfg
+    workflow.scorer.config = workflow.config
+
+    ok_cve = {
+        'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0,
+        'epss_high': 0, 'max_epss': 0.0, 'cves': [],
+        'last_updated': '2026-01-01', 'status': 'success', 'error': None,
+    }
+    ok_osv = {
+        'total': 0, 'malicious_count': 0, 'is_malicious': False,
+        'malicious_ids': [], 'extra_advisories': 0, 'advisories': [],
+        'last_updated': '2026-01-01', 'status': 'success', 'error': None,
+    }
+
+    import unittest.mock as mock
+    with mock.patch.object(workflow.scorer, 'check_cves', return_value=ok_cve), \
+         mock.patch.object(workflow.scorer, 'check_osv', return_value=ok_osv), \
+         mock.patch.object(workflow.scorer, 'get_download_count', return_value={
+             'weekly_downloads': 50000, 'period': 'weekly', 'registry': 'npm',
+             'status': 'success', 'error': None,
+         }):
+
+        result = workflow.evaluate_component({
+            'package_name': 'some-pkg',
+            'ecosystem': 'npm',
+            'criticality': 'Non-Critical',
+            # contributor_locations is normally populated from GitHub; inject directly
+            'contributor_locations': [
+                {'country_code': 'XX', 'contributions': 500},
+            ],
+        })
+
+    # Compliance section must be present
+    assert 'compliance' in result, "Expected 'compliance' key in result"
+    assert 'geo_jurisdiction' in result['compliance']
+    geo = result['compliance']['geo_jurisdiction']
+    assert geo['affects_technical_score'] is False
+    assert 'score' in geo
+    assert 'status' in geo
+
+    # Trust score must still equal maturity — contributor locations should not affect it
+    trust_score = result['scores']['trust']
+    # Without github_metrics forks data, maturity = 50 (neutral)
+    assert trust_score == 50.0, (
+        f"Trust score must be maturity-only (50.0), got {trust_score}"
+    )
+
+
+# OSV disabled/unsupported status codes
+# ---------------------------------------------------------------------------
+
+
+def test_check_osv_disabled_returns_disabled_status():
+    """OSV intentionally disabled should report status='disabled', not 'error'."""
+    import copy
+    scorer = _make_scorer()
+    scorer.config = copy.deepcopy(MINIMAL_CONFIG)
+    scorer.config['osv'] = {'enabled': False}
+
+    result = scorer.check_osv('some-pkg', 'npm')
+    assert result['status'] == 'disabled', (
+        f"Expected 'disabled', got {result['status']!r}"
+    )
+    assert result['error'] is None
+
+
+def test_check_osv_unsupported_ecosystem_returns_unsupported_status():
+    """Unknown ecosystem should report status='unsupported', not 'error'."""
+    scorer = _make_scorer()
+    result = scorer.check_osv('some-pkg', 'cobol')
+    assert result['status'] == 'unsupported', (
+        f"Expected 'unsupported', got {result['status']!r}"
+    )

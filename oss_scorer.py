@@ -792,21 +792,23 @@ class OSSScorer:
           total             – total advisory count
           advisories        – full list (id, summary, is_malicious, aliases)
         """
-        _empty: dict = {
+        _base: dict = {
             'total': 0, 'malicious_count': 0, 'is_malicious': False,
             'malicious_ids': [], 'extra_advisories': 0, 'advisories': [],
             'last_updated': None,
-            'status': 'error',
-            'error': None,
         }
+        # Network/provider failure template — used for actual errors only.
+        _empty: dict = {**_base, 'status': 'error', 'error': None}
 
         if not self.config.get('osv', {}).get('enabled', True):
-            return _empty
+            # OSV intentionally disabled — not a provider error.
+            return {**_base, 'status': 'disabled', 'error': None}
 
         osv_ecosystem = self._resolve_osv_ecosystem(ecosystem)
         if not osv_ecosystem:
             logger.info("No OSV ecosystem mapping for %r — skipping OSV check", ecosystem)
-            return _empty
+            # Ecosystem has no OSV mapping — not a network failure.
+            return {**_base, 'status': 'unsupported', 'error': None}
 
         # Whether to honour MAL- advisory flags (requires malicious_packages.enabled)
         check_malicious = self.config.get('malicious_packages', {}).get('enabled', True)
@@ -1312,6 +1314,32 @@ class OSSWorkflow:
                     "OSV check skipped for %s", component_data['package_name']
                 )
 
+        # ------------------------------------------------------------------
+        # Provider-health audit — detect failed security data sources before
+        # computing scores.  When NVD or OSV cannot be reached the security
+        # sub-score starts at 100 (no CVEs seen ≠ no CVEs exist); allowing
+        # that to produce APPROVED would violate the project's audit contract.
+        # ------------------------------------------------------------------
+        provider_warnings: list[str] = []
+        nvd_status = results.get('cve_data', {}).get('status', 'success')
+        osv_status = results.get('osv_data', {}).get('status', 'success')
+
+        if nvd_status == 'error':
+            provider_warnings.append(
+                "NVD provider unavailable — CVE data is incomplete; "
+                "security score may be overstated"
+            )
+        if osv_status == 'error':
+            provider_warnings.append(
+                "OSV provider unavailable — vulnerability/malicious-package "
+                "check is incomplete"
+            )
+
+        insufficient_data = bool(provider_warnings)
+        if provider_warnings:
+            existing = results.get('warnings', [])
+            results['warnings'] = list(existing) + provider_warnings
+
         # Calculate scores
         scores = {
             'activity': self._calculate_activity_score(results),
@@ -1329,13 +1357,38 @@ class OSSWorkflow:
 
         approval = self._determine_approval(total_score, criticality)
 
+        # If required security providers failed the score is unreliable — a
+        # clean-looking score must not silently become an approval.
+        if insufficient_data and approval == 'APPROVED':
+            approval = 'REVIEW'
+
         results.update({
             'scores': scores,
             'weighted_scores': weighted_scores,
             'total_score': total_score,
             'approval': approval,
+            'insufficient_data': insufficient_data,
             'risk_level': self._get_risk_level(total_score)
         })
+
+        # Optional geo-compliance assessment.  Results are stored under a
+        # separate 'compliance' key and never modify the technical trust score.
+        geo_cfg = self.config.get('risk', {}).get('geo_compliance', {})
+        if geo_cfg.get('enabled', False) and 'contributor_locations' in results:
+            geo_score = self._calculate_geo_risk_score(results['contributor_locations'])
+            if geo_score >= 70:
+                geo_status = 'OK'
+            elif geo_score >= 40:
+                geo_status = 'REVIEW'
+            else:
+                geo_status = 'ALERT'
+            results['compliance'] = {
+                'geo_jurisdiction': {
+                    'score': geo_score,
+                    'status': geo_status,
+                    'affects_technical_score': False,
+                }
+            }
 
         # Malicious package: force PROHIBITED regardless of score or criticality
         if (results.get('osv_data', {}).get('is_malicious')
@@ -1435,12 +1488,12 @@ class OSSWorkflow:
     def _calculate_trust_score(self, results: dict) -> float:
         """Calculate trustworthiness score (0-100).
 
-        Blends two sub-dimensions:
-        - Project maturity (60%) — based on fork count as a community proxy
-        - Optional compliance geo-risk (40%) — only when a jurisdiction policy is
-          explicitly enabled; otherwise this component stays neutral.
+        The technical trust score is based solely on project maturity (fork
+        count as a community-adoption proxy).  Contributor geography is NOT
+        part of this score — it is evaluated separately in evaluate_component()
+        and returned under ``compliance.geo_jurisdiction`` so that jurisdiction
+        policy never silently changes the numeric package-risk score.
         """
-        # Maturity sub-score
         forks = (results.get('github_metrics') or {}).get('forks', 0)
         if forks > _FORKS_HIGH_THRESHOLD:
             maturity = 100.0
@@ -1452,14 +1505,6 @@ class OSSWorkflow:
             maturity = 40.0
         else:
             maturity = 50.0  # no data at all — neutral
-
-        # Geography is not used as a default maliciousness signal. Only a
-        # separately-configured compliance rule may apply a jurisdiction penalty.
-        # When geo is disabled, trust equals maturity alone — no hidden 40% cap.
-        geo_cfg = self.config.get('risk', {}).get('geo_compliance', {})
-        if 'contributor_locations' in results and geo_cfg.get('enabled', False):
-            geo = self._calculate_geo_risk_score(results['contributor_locations'])
-            return round(0.6 * maturity + 0.4 * geo, 1)
 
         return round(maturity, 1)
 

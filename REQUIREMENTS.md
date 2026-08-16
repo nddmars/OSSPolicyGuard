@@ -192,9 +192,9 @@
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
-| 11.1 | Criticality-tiered approval for **Mission Critical** components | ✅ | ≥90→APPROVED, ≥80→REVIEW BOARD, else→PROHIBITED |
-| 11.2 | Criticality-tiered approval for **Business Critical** components | ✅ | ≥80→APPROVED, ≥70→MITIGATION REQUIRED, else→PROHIBITED |
-| 11.3 | Criticality-tiered approval for **Non-Critical** components | ✅ | ≥70→AUTO-APPROVED, ≥60→APPROVED, else→MITIGATION REQUIRED |
+| 11.1 | Criticality-tiered approval for **Mission Critical** components | ✅ | score≥90→APPROVED, score≥80→REVIEW, else→PROHIBITED |
+| 11.2 | Criticality-tiered approval for **Business Critical** components | ✅ | score≥80→APPROVED, score≥70→REVIEW, else→PROHIBITED |
+| 11.3 | Criticality-tiered approval for **Non-Critical** components | ✅ | score≥60→APPROVED, else→REVIEW (never PROHIBITED by score alone) |
 | 11.4 | Validate `criticality` field on input; reject unknown values | ✅ | `ValueError` raised for any value outside `_VALID_CRITICALITY` |
 | 11.5 | Validate `component_data` is a dict; reject other types | ✅ | `TypeError` raised with descriptive message |
 | 11.6 | Malicious package overrides approval to PROHIBITED regardless of score | ✅ | Post-scoring override in `evaluate_component()` |
