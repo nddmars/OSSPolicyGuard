@@ -26,9 +26,9 @@ The decision depends on the package's **criticality level** (passed via `--criti
 
 | Decision | Mission Critical | Business Critical | Non-Critical |
 |----------|-----------------|-------------------|--------------|
-| APPROVED | score ≥ 90 | score ≥ 80 | score ≥ 70 |
-| REVIEW | 80 ≤ score < 90 | 70 ≤ score < 80 | 60 ≤ score < 70 |
-| PROHIBITED | score < 80 | score < 70 | score < 60 |
+| APPROVED | score ≥ 90 | score ≥ 80 | score ≥ 60 |
+| REVIEW | 80 ≤ score < 90 | 70 ≤ score < 80 | score < 60 |
+| PROHIBITED | score < 80 | score < 70 | — (never by score alone) |
 
 A confirmed malicious-package flag (`is_malicious=True` from the OSV/ossf malicious-packages feed) forces **PROHIBITED** regardless of the numeric score or criticality level.
 

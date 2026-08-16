@@ -307,7 +307,7 @@ def _epss_response(*pairs):
 class TestCheckCves:
     @patch('oss_scorer.requests.get')
     def test_success_parses_nvd_v2_severity_bands(self, mock_get):
-        # First call: NVD rate-limiter probe (ignored), second: real NVD v2, third: EPSS
+        # One NVD call (rate-limited) then one EPSS call — no dead probe any more.
         nvd_resp = MagicMock(status_code=200)
         nvd_resp.json.return_value = _nvd_v2_response(
             ('CVE-2021-0001', 'CRITICAL', 9.8),
@@ -317,7 +317,7 @@ class TestCheckCves:
         epss_resp = MagicMock(status_code=200)
         epss_resp.json.return_value = _epss_response()  # no EPSS data
 
-        mock_get.side_effect = [nvd_resp, nvd_resp, epss_resp]
+        mock_get.side_effect = [nvd_resp, epss_resp]
 
         scorer = _make_scorer()
         result = scorer.check_cves("some-lib")
@@ -336,7 +336,8 @@ class TestCheckCves:
         epss_resp = MagicMock(status_code=200)
         epss_resp.json.return_value = _epss_response(('CVE-2021-44228', 0.975))
 
-        mock_get.side_effect = [nvd_resp, nvd_resp, epss_resp]
+        # Single NVD call + single EPSS call (no dead probe).
+        mock_get.side_effect = [nvd_resp, epss_resp]
 
         scorer = _make_scorer()
         result = scorer.check_cves("log4j")
@@ -527,31 +528,31 @@ class TestCalculateActivityScore:
 # ---------------------------------------------------------------------------
 
 class TestCalculateTrustScore:
-    # Without contributor_locations the geo sub-score is neutral (50), so the
-    # blended result is: 0.6 * maturity + 0.4 * 50.
+    # When geo_compliance is disabled (the default), trust equals maturity only;
+    # there is no hidden 40% geo weight applied.
 
     def test_high_forks_no_geo_data(self):
-        # maturity=100, geo=50 → 0.6*100 + 0.4*50 = 80
+        # forks=10000 > 5000 → maturity=100 → trust=100
         workflow = _make_workflow()
-        assert workflow._calculate_trust_score({'github_metrics': {'forks': 10000}}) == 80.0
+        assert workflow._calculate_trust_score({'github_metrics': {'forks': 10000}}) == 100.0
 
     def test_medium_forks_no_geo_data(self):
-        # maturity=80, geo=50 → 0.6*80 + 0.4*50 = 68
+        # forks=2000 > 1000 → maturity=80 → trust=80
         workflow = _make_workflow()
-        assert workflow._calculate_trust_score({'github_metrics': {'forks': 2000}}) == 68.0
+        assert workflow._calculate_trust_score({'github_metrics': {'forks': 2000}}) == 80.0
 
     def test_low_forks_no_geo_data(self):
-        # maturity=60, geo=50 → 0.6*60 + 0.4*50 = 56
+        # forks=500 > 100 → maturity=60 → trust=60
         workflow = _make_workflow()
-        assert workflow._calculate_trust_score({'github_metrics': {'forks': 500}}) == 56.0
+        assert workflow._calculate_trust_score({'github_metrics': {'forks': 500}}) == 60.0
 
     def test_very_low_forks_no_geo_data(self):
-        # maturity=40, geo=50 → 0.6*40 + 0.4*50 = 44
+        # forks=10, github_metrics present → maturity=40 → trust=40
         workflow = _make_workflow()
-        assert workflow._calculate_trust_score({'github_metrics': {'forks': 10}}) == 44.0
+        assert workflow._calculate_trust_score({'github_metrics': {'forks': 10}}) == 40.0
 
     def test_no_github_metrics_returns_50(self):
-        # maturity=50 (no data), geo=50 (no data) → 50
+        # No github_metrics → maturity=50 (neutral) → trust=50
         workflow = _make_workflow()
         assert workflow._calculate_trust_score({}) == 50.0
 
@@ -591,9 +592,9 @@ class TestDetermineApproval:
         wf = _make_workflow()
         assert wf._determine_approval(95, "Mission Critical") == "APPROVED"
 
-    def test_mission_critical_review_board(self):
+    def test_mission_critical_review(self):
         wf = _make_workflow()
-        assert wf._determine_approval(85, "Mission Critical") == "REVIEW BOARD"
+        assert wf._determine_approval(85, "Mission Critical") == "REVIEW"
 
     def test_mission_critical_prohibited(self):
         wf = _make_workflow()
@@ -603,34 +604,35 @@ class TestDetermineApproval:
         wf = _make_workflow()
         assert wf._determine_approval(85, "Business Critical") == "APPROVED"
 
-    def test_business_critical_mitigation_required(self):
+    def test_business_critical_review(self):
         wf = _make_workflow()
-        assert wf._determine_approval(75, "Business Critical") == "MITIGATION REQUIRED"
+        assert wf._determine_approval(75, "Business Critical") == "REVIEW"
 
     def test_business_critical_prohibited(self):
         wf = _make_workflow()
         assert wf._determine_approval(50, "Business Critical") == "PROHIBITED"
 
-    def test_non_critical_auto_approved(self):
+    def test_non_critical_approved_above_low(self):
         wf = _make_workflow()
-        assert wf._determine_approval(75, "Non-Critical") == "AUTO-APPROVED"
+        assert wf._determine_approval(75, "Non-Critical") == "APPROVED"
 
-    def test_non_critical_approved(self):
+    def test_non_critical_approved_at_low(self):
         wf = _make_workflow()
-        assert wf._determine_approval(65, "Non-Critical") == "APPROVED"
+        assert wf._determine_approval(60, "Non-Critical") == "APPROVED"
 
-    def test_non_critical_mitigation_required(self):
+    def test_non_critical_review_below_low(self):
+        # Non-Critical never returns PROHIBITED by score alone
         wf = _make_workflow()
-        assert wf._determine_approval(50, "Non-Critical") == "MITIGATION REQUIRED"
+        assert wf._determine_approval(50, "Non-Critical") == "REVIEW"
 
     def test_exact_threshold_boundaries(self):
         """Boundary values for each threshold."""
         wf = _make_workflow()
         # critical=90
         assert wf._determine_approval(90, "Mission Critical") == "APPROVED"
-        assert wf._determine_approval(89.9, "Mission Critical") == "REVIEW BOARD"
+        assert wf._determine_approval(89.9, "Mission Critical") == "REVIEW"
         # high=80
-        assert wf._determine_approval(80, "Mission Critical") == "REVIEW BOARD"
+        assert wf._determine_approval(80, "Mission Critical") == "REVIEW"
         assert wf._determine_approval(79.9, "Mission Critical") == "PROHIBITED"
 
 
@@ -894,14 +896,14 @@ class TestTrustScoreBlending:
                 {'login': 'a', 'contributions': 100, 'country_code': 'CN'},
             ]
         }
-        # Location should not affect the default trust score unless the compliance rule is enabled.
-        assert wf._calculate_trust_score(results) == 80.0
+        # Geo disabled in MINIMAL_CONFIG → trust = maturity = 100 regardless of locations.
+        assert wf._calculate_trust_score(results) == 100.0
 
     def test_no_contributors_uses_neutral_geo(self):
         wf = _make_workflow()
         results = {'github_metrics': {'forks': 6000}}
-        # maturity=100 (>5000), geo=50 (neutral) → 0.6*100 + 0.4*50 = 80
-        assert wf._calculate_trust_score(results) == 80.0
+        # forks=6000 > 5000 → maturity=100; geo disabled → trust=100
+        assert wf._calculate_trust_score(results) == 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -1083,19 +1085,25 @@ class TestGetDownloadCount:
         result = _make_scorer().get_download_count('laravel', 'php')
         assert result['weekly_downloads'] == 0
 
-    def test_unknown_ecosystem_returns_none(self):
+    def test_unknown_ecosystem_returns_error_dict(self):
         result = _make_scorer().get_download_count('mylib', 'cobol')
-        assert result is None
+        assert isinstance(result, dict)
+        assert result['status'] == 'error'
+        assert result['weekly_downloads'] is None
 
-    def test_disabled_registry_returns_none(self):
+    def test_disabled_registry_returns_error_dict(self):
         result = _make_scorer().get_download_count('mylib', 'java')
-        assert result is None
+        assert isinstance(result, dict)
+        assert result['status'] == 'error'
+        assert result['weekly_downloads'] is None
 
     @patch('oss_scorer.requests.get')
-    def test_network_error_returns_none(self, mock_get):
+    def test_network_error_returns_error_dict(self, mock_get):
         mock_get.side_effect = requests_exception()
         result = _make_scorer().get_download_count('requests', 'python')
-        assert result is None
+        assert isinstance(result, dict)
+        assert result['status'] == 'error'
+        assert result['weekly_downloads'] is None
 
 
 # ---------------------------------------------------------------------------

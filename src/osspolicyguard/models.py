@@ -214,52 +214,55 @@ class EvaluationResult:
 
         if "osv_data" in result:
             osv = result["osv_data"]
-            # The legacy scorer returns an empty structure on network failure;
-            # treat a missing/null last_updated as an indicator of unavailability.
-            osv_status = (
-                "unavailable"
-                if not osv.get("last_updated") and not osv.get("advisories")
-                else osv.get("status", "success")
-            )
+            # Prefer the explicit 'status' field added by the scorer.  Fall back
+            # to the timestamp heuristic for backward compatibility with older
+            # scorer versions that did not emit an explicit status.
+            if "status" in osv:
+                osv_status = osv["status"]
+            elif not osv.get("last_updated") and not osv.get("advisories"):
+                osv_status = "unavailable"
+            else:
+                osv_status = "success"
             evidence.append(ProviderResult(
                 provider="osv",
                 status=osv_status,
-                fetched_at=osv.get("last_updated", ""),
-                data={k: v for k, v in osv.items() if k != "last_updated"},
+                fetched_at=osv.get("last_updated") or "",
+                data={k: v for k, v in osv.items() if k not in {"last_updated", "status", "error"}},
                 error=osv.get("error"),
             ))
 
         if "cve_data" in result:
             cve = result["cve_data"]
-            # A zero-total result with no last_updated timestamp signals a
-            # failed fetch rather than a package with no CVEs.
-            cve_status = (
-                "unavailable"
-                if not cve.get("last_updated") and cve.get("total", 0) == 0
-                   and not cve.get("critical") and not cve.get("high")
-                else cve.get("status", "success")
-            )
+            # Prefer the explicit 'status' field.  Fall back to the zero-total /
+            # missing-timestamp heuristic for older scorer outputs.
+            if "status" in cve:
+                cve_status = cve["status"]
+            elif not cve.get("last_updated") and cve.get("total", 0) == 0 \
+                    and not cve.get("critical") and not cve.get("high"):
+                cve_status = "unavailable"
+            else:
+                cve_status = "success"
             evidence.append(ProviderResult(
                 provider="nvd",
                 status=cve_status,
-                fetched_at=cve.get("last_updated", ""),
-                data={k: v for k, v in cve.items() if k != "last_updated"},
+                fetched_at=cve.get("last_updated") or "",
+                data={k: v for k, v in cve.items() if k not in {"last_updated", "status", "error"}},
                 error=cve.get("error"),
             ))
 
         if "download_data" in result:
             dl = result["download_data"]
-            # None weekly_downloads means the registry fetch failed.
-            dl_status = (
-                "unavailable"
-                if dl.get("weekly_downloads") is None
-                else dl.get("status", "success")
-            )
+            # Prefer the explicit 'status' field; also treat None weekly_downloads
+            # as an unavailability signal regardless of the status string.
+            if dl.get("status") == "error" or dl.get("weekly_downloads") is None:
+                dl_status = "unavailable"
+            else:
+                dl_status = dl.get("status", "success")
             evidence.append(ProviderResult(
                 provider=dl.get("registry", "registry"),
                 status=dl_status,
                 fetched_at="",
-                data=dict(dl),
+                data={k: v for k, v in dl.items() if k not in {"status", "error"}},
                 error=dl.get("error"),
             ))
 

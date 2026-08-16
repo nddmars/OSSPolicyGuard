@@ -588,7 +588,13 @@ class OSSScorer:
             return {'apiKey': self.config['nvd']['api_key']}
         return {}
 
-    def _rate_limited_get(self, url: str, headers: dict, timeout: int) -> requests.Response:
+    def _rate_limited_get(
+        self,
+        url: str,
+        headers: dict,
+        timeout: int,
+        params: dict | None = None,
+    ) -> requests.Response:
         """Perform a GET request, sleeping to honour the configured rate limit."""
         rate_limit = self.config.get('nvd', {}).get('rate_limit', 5)
         min_interval = 1.0 / rate_limit
@@ -596,7 +602,7 @@ class OSSScorer:
         if elapsed < min_interval:
             time.sleep(min_interval - elapsed)
         self._last_request_time = time.monotonic()
-        return requests.get(url, headers=headers, timeout=timeout)
+        return requests.get(url, headers=headers, timeout=timeout, params=params)
 
     def get_github_metrics(self, repo_url: str) -> dict | None:
         """Fetch live GitHub metrics using the provider contract."""
@@ -623,29 +629,30 @@ class OSSScorer:
         _empty = {
             'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0,
             'epss_high': 0, 'max_epss': 0.0, 'cves': [],
-            'last_updated': datetime.now().isoformat()
+            'last_updated': None,
+            'status': 'error',
+            'error': None,
         }
 
         try:
             since = (datetime.now(timezone.utc) - timedelta(days=_CVE_LOOKBACK_DAYS)).strftime(
                 '%Y-%m-%dT00:00:00.000'
             )
+            params = {
+                'keywordSearch': package_name,
+                'resultsPerPage': 50,
+                'pubStartDate': since,
+            }
             response = self._rate_limited_get(
                 "https://services.nvd.nist.gov/rest/json/cves/2.0",
                 headers=self._build_headers('nvd'),
-                timeout=self.config['github']['timeout']
-            )
-            # NVD v2 requires params via the URL; rebuild with params
-            response = requests.get(
-                "https://services.nvd.nist.gov/rest/json/cves/2.0",
-                params={'keywordSearch': package_name, 'resultsPerPage': 50,
-                        'pubStartDate': since},
-                headers=self._build_headers('nvd'),
-                timeout=self.config['github']['timeout']
+                timeout=self.config['github']['timeout'],
+                params=params,
             )
 
             if response.status_code != 200:
                 logger.warning("NVD API returned %s for %s", response.status_code, package_name)
+                _empty['error'] = f"HTTP {response.status_code}"
                 return _empty
 
             parsed = []
@@ -679,11 +686,18 @@ class OSSScorer:
                 })
 
         except requests.RequestException as e:
-            logger.error("NVD API error for %s: %s", package_name, e)
+            logger.error("NVD API error for %s: %s", package_name, str(e))
+            _empty['error'] = str(e)
             return _empty
 
         if not parsed:
-            return _empty
+            return {
+                'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0,
+                'epss_high': 0, 'max_epss': 0.0, 'cves': [],
+                'last_updated': datetime.now().isoformat(),
+                'status': 'success',
+                'error': None,
+            }
 
         # Enrich with EPSS scores (batched, best-effort)
         epss_map = self.get_epss_scores([c['id'] for c in parsed if c['id']])
@@ -702,6 +716,8 @@ class OSSScorer:
             'max_epss':  round(max((c['epss'] for c in parsed), default=0.0), 4),
             'cves':      parsed,
             'last_updated': datetime.now().isoformat(),
+            'status': 'success',
+            'error': None,
         }
 
     def get_epss_scores(self, cve_ids: list[str]) -> dict[str, dict]:
@@ -779,7 +795,9 @@ class OSSScorer:
         _empty: dict = {
             'total': 0, 'malicious_count': 0, 'is_malicious': False,
             'malicious_ids': [], 'extra_advisories': 0, 'advisories': [],
-            'last_updated': datetime.now().isoformat(),
+            'last_updated': None,
+            'status': 'error',
+            'error': None,
         }
 
         if not self.config.get('osv', {}).get('enabled', True):
@@ -805,6 +823,7 @@ class OSSScorer:
                     "OSV API returned %s for %s/%s", resp.status_code,
                     osv_ecosystem, package_name
                 )
+                _empty['error'] = f"HTTP {resp.status_code}"
                 return _empty
 
             advisories: list[dict] = []
@@ -839,10 +858,13 @@ class OSSScorer:
                 'extra_advisories': extra_count,
                 'advisories': advisories,
                 'last_updated': datetime.now().isoformat(),
+                'status': 'success',
+                'error': None,
             }
 
         except requests.RequestException as e:
-            logger.error("OSV API error for %s/%s: %s", osv_ecosystem, package_name, e)
+            logger.error("OSV API error for %s/%s: %s", osv_ecosystem, package_name, str(e))
+            _empty['error'] = str(e)
             return _empty
 
     def _resolve_registry(self, ecosystem: str) -> str | None:
@@ -876,37 +898,61 @@ class OSSScorer:
         logger.info("No registry found for ecosystem %r", ecosystem)
         return None
 
-    def get_download_count(self, package_name: str, ecosystem: str) -> dict | None:
+    def get_download_count(self, package_name: str, ecosystem: str) -> dict:
         """Fetch weekly download statistics from the appropriate package registry.
 
         The registry is resolved from config via ecosystem/language name.
-        Returns a dict with keys: weekly_downloads (int), period (str),
-        registry (str).  Returns None on unknown ecosystem or fetch failure.
+        Returns a dict with keys: weekly_downloads (int or None), period (str),
+        registry (str), status (str), error (str or None).
+        On unknown ecosystem or fetch failure, returns a dict with
+        weekly_downloads=None and status='error' so callers can detect failures.
         All periods are normalised to a weekly equivalent where possible.
         """
         registry = self._resolve_registry(ecosystem)
         if registry is None:
-            return None
+            return {
+                'weekly_downloads': None,
+                'period': 'unknown',
+                'registry': ecosystem,
+                'status': 'error',
+                'error': f"No registry mapping for ecosystem {ecosystem!r}",
+            }
 
         timeout = self.config['registries'][registry].get('timeout', 10)
         try:
             if registry == 'npm':
-                return self._fetch_npm(package_name, timeout)
-            if registry == 'pypi':
-                return self._fetch_pypi(package_name, timeout)
-            if registry == 'rubygems':
-                return self._fetch_rubygems(package_name, timeout)
-            if registry == 'crates':
-                return self._fetch_crates(package_name, timeout)
-            if registry == 'nuget':
-                return self._fetch_nuget(package_name, timeout)
-            if registry == 'packagist':
-                return self._fetch_packagist(package_name, timeout)
-            logger.info("No download fetcher implemented for registry %r", registry)
-            return None
+                result = self._fetch_npm(package_name, timeout)
+            elif registry == 'pypi':
+                result = self._fetch_pypi(package_name, timeout)
+            elif registry == 'rubygems':
+                result = self._fetch_rubygems(package_name, timeout)
+            elif registry == 'crates':
+                result = self._fetch_crates(package_name, timeout)
+            elif registry == 'nuget':
+                result = self._fetch_nuget(package_name, timeout)
+            elif registry == 'packagist':
+                result = self._fetch_packagist(package_name, timeout)
+            else:
+                logger.info("No download fetcher implemented for registry %r", registry)
+                return {
+                    'weekly_downloads': None,
+                    'period': 'unknown',
+                    'registry': registry,
+                    'status': 'error',
+                    'error': f"No fetcher for registry {registry!r}",
+                }
+            result.setdefault('status', 'success')
+            result.setdefault('error', None)
+            return result
         except requests.RequestException as e:
-            logger.error("Download count error [%s/%s]: %s", registry, package_name, e)
-            return None
+            logger.error("Download count error [%s/%s]: %s", registry, package_name, str(e))
+            return {
+                'weekly_downloads': None,
+                'period': 'unknown',
+                'registry': registry,
+                'status': 'error',
+                'error': str(e),
+            }
 
     def _fetch_npm(self, package: str, timeout: int) -> dict:
         """Weekly downloads from the npm registry API."""
@@ -1244,8 +1290,9 @@ class OSSWorkflow:
                 dl_data = self.scorer.get_download_count(
                     component_data['package_name'], ecosystem
                 )
-                if dl_data:
-                    results['download_data'] = dl_data
+                # Always store download_data so from_legacy() can detect failures
+                # via the explicit status field rather than key absence.
+                results['download_data'] = dl_data
             else:
                 logger.info(
                     "No 'ecosystem' or 'language' in component_data — "
@@ -1377,8 +1424,11 @@ class OSSWorkflow:
             cve_score = max(0.0, cve_score - min(max_pen, extra * deduction))
 
         if 'scorecard_data' in results:
-            scorecard_score = min(100.0, results['scorecard_data']['score'] * 10)
-            return round(0.6 * cve_score + 0.4 * scorecard_score, 1)
+            sc_score = results['scorecard_data'].get('score')
+            if sc_score is not None:
+                scorecard_score = min(100.0, sc_score * 10)
+                return round(0.6 * cve_score + 0.4 * scorecard_score, 1)
+            # Scorecard provider failed (no 'score' key) — fall back to CVE-only score.
 
         return round(cve_score, 1)
 
@@ -1405,13 +1455,13 @@ class OSSWorkflow:
 
         # Geography is not used as a default maliciousness signal. Only a
         # separately-configured compliance rule may apply a jurisdiction penalty.
+        # When geo is disabled, trust equals maturity alone — no hidden 40% cap.
         geo_cfg = self.config.get('risk', {}).get('geo_compliance', {})
         if 'contributor_locations' in results and geo_cfg.get('enabled', False):
             geo = self._calculate_geo_risk_score(results['contributor_locations'])
-        else:
-            geo = 50.0  # unknown or explicitly neutral — no default penalty
+            return round(0.6 * maturity + 0.4 * geo, 1)
 
-        return round(0.6 * maturity + 0.4 * geo, 1)
+        return round(maturity, 1)
 
     def _calculate_geo_risk_score(self, contributors: list[dict]) -> float:
         """Score optional compliance risk from geocoded contributors.
@@ -1476,16 +1526,17 @@ class OSSWorkflow:
             if stars > _STARS_LOW_THRESHOLD:  return 60.0
             return 40.0
 
-        has_dl   = 'download_data' in results
+        weekly = (results.get('download_data') or {}).get('weekly_downloads')
+        has_dl   = weekly is not None
         has_star = 'github_metrics' in results
 
         if has_dl and has_star:
-            dl   = _dl_score(results['download_data']['weekly_downloads'])
+            dl   = _dl_score(weekly)
             star = _star_score(results['github_metrics'].get('stars', 0))
             return round(dl_w * dl + star_w * star, 1)
 
         if has_dl:
-            return _dl_score(results['download_data']['weekly_downloads'])
+            return _dl_score(weekly)
 
         if has_star:
             return _star_score(results['github_metrics'].get('stars', 0))
@@ -1493,25 +1544,35 @@ class OSSWorkflow:
         return 40.0  # no data — penalised but not zero
 
     def _determine_approval(self, score: float, criticality: str) -> str:
+        """Return one of three canonical decision strings: APPROVED, REVIEW, PROHIBITED.
+
+        Thresholds come from config['scoring']['thresholds']:
+          critical (default 90), high (default 80), medium (default 70), low (default 60).
+
+        Mission Critical  : score ≥ critical → APPROVED; ≥ high → REVIEW; else PROHIBITED
+        Business Critical : score ≥ high     → APPROVED; ≥ medium → REVIEW; else PROHIBITED
+        Non-Critical      : score ≥ low      → APPROVED; else REVIEW (never PROHIBITED)
+
+        A malicious-package flag overrides to PROHIBITED regardless of score; that
+        check is applied upstream in evaluate_component().
+        """
         t = self.config['scoring']['thresholds']
         if criticality == "Mission Critical":
             if score >= t['critical']:
                 return "APPROVED"
             if score >= t['high']:
-                return "REVIEW BOARD"
+                return "REVIEW"
             return "PROHIBITED"
         if criticality == "Business Critical":
             if score >= t['high']:
                 return "APPROVED"
             if score >= t['medium']:
-                return "MITIGATION REQUIRED"
+                return "REVIEW"
             return "PROHIBITED"
-        # Non-Critical
-        if score >= t['medium']:
-            return "AUTO-APPROVED"
+        # Non-Critical — never PROHIBITED by score alone
         if score >= t['low']:
             return "APPROVED"
-        return "MITIGATION REQUIRED"
+        return "REVIEW"
 
     def _get_risk_level(self, score: float) -> str:
         thresholds = self.config['scoring']['thresholds']

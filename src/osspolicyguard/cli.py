@@ -55,7 +55,7 @@ def scan_package(
     result = workflow.evaluate_component(component)
 
     enforcement = "review_fails_ci" if review_fails_ci else "default"
-    decision = result.get("approval", "REVIEW")
+    decision = _normalize_decision(result.get("approval", "REVIEW"))
 
     findings: list[dict] = []
     try:
@@ -75,8 +75,8 @@ def scan_package(
         _eval = EvaluationResult.from_legacy(result, package_name, ecosystem or "npm")
         evidence = [e.to_dict() for e in _eval.evidence]
         warnings = list(_eval.warnings)
-    except Exception:
-        pass
+    except Exception as exc:
+        warnings.append(f"Evidence construction error: {exc}")
 
     return {
         "schema_version": "1.0",
