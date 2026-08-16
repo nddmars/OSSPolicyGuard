@@ -64,6 +64,20 @@ def scan_package(
     except ImportError:
         pass
 
+    # Build evidence and warnings from the legacy scorer result.
+    # EvaluationResult.from_legacy detects real provider failures rather than
+    # hardcoding "success" for every provider, which keeps the evidence section
+    # auditable and consistent with the project's central promise.
+    evidence: list[dict] = []
+    warnings: list[str] = []
+    try:
+        from .models import EvaluationResult
+        _eval = EvaluationResult.from_legacy(result, package_name, ecosystem or "npm")
+        evidence = [e.to_dict() for e in _eval.evidence]
+        warnings = list(_eval.warnings)
+    except Exception:
+        pass
+
     return {
         "schema_version": "1.0",
         "tool_version": __import__("osspolicyguard").__version__,
@@ -88,8 +102,8 @@ def scan_package(
             "supply_chain_risk": round(float(result.get("scores", {}).get("trust", 0)), 1),
         },
         "findings": findings,
-        "evidence": [],
-        "warnings": [],
+        "evidence": evidence,
+        "warnings": warnings,
         "malicious_package_detected": bool(
             result.get("osv_data", {}).get("is_malicious", False)
         ),
@@ -142,8 +156,13 @@ def _sarif_stub(result: dict[str, Any]) -> dict[str, Any]:
 
 def scan_manifest(argv: list[str] | None = None) -> int:
     """Placeholder for OPG-068: manifest scanning not yet implemented."""
-    print("Manifest scanning not yet implemented")
-    return 0
+    import sys
+    print(
+        "osspolicyguard manifest: not yet implemented (OPG-068).\n"
+        "Use 'osspolicyguard scan <package>' to evaluate a single package.",
+        file=sys.stderr,
+    )
+    return 2  # unsupported-operation — distinct from REVIEW (only set with --review-fails-ci)
 
 
 def _get_version() -> str:
@@ -219,13 +238,20 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         parser = _build_parser()
         args = parser.parse_args(argv)
 
-        # Configure logging as early as possible.
+        # Configure logging as early as possible.  Use the project's own
+        # configure_logging() so that the redacting filter is attached to the
+        # handler (not just the root logger) and secrets are scrubbed from all
+        # propagated child-logger records.
         log_level: str = getattr(args, "log_level", "WARNING")
-        logging.basicConfig(
-            level=getattr(logging, log_level, logging.WARNING),
-            format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-            stream=sys.stderr,
-        )
+        try:
+            from .logging_config import configure_logging
+            configure_logging(level=log_level, json_output=False)
+        except ImportError:
+            logging.basicConfig(
+                level=getattr(logging, log_level, logging.WARNING),
+                format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+                stream=sys.stderr,
+            )
 
         if args.command == "version":
             print(_get_version())

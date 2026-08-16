@@ -214,29 +214,53 @@ class EvaluationResult:
 
         if "osv_data" in result:
             osv = result["osv_data"]
+            # The legacy scorer returns an empty structure on network failure;
+            # treat a missing/null last_updated as an indicator of unavailability.
+            osv_status = (
+                "unavailable"
+                if not osv.get("last_updated") and not osv.get("advisories")
+                else osv.get("status", "success")
+            )
             evidence.append(ProviderResult(
                 provider="osv",
-                status="success",
+                status=osv_status,
                 fetched_at=osv.get("last_updated", ""),
                 data={k: v for k, v in osv.items() if k != "last_updated"},
+                error=osv.get("error"),
             ))
 
         if "cve_data" in result:
             cve = result["cve_data"]
+            # A zero-total result with no last_updated timestamp signals a
+            # failed fetch rather than a package with no CVEs.
+            cve_status = (
+                "unavailable"
+                if not cve.get("last_updated") and cve.get("total", 0) == 0
+                   and not cve.get("critical") and not cve.get("high")
+                else cve.get("status", "success")
+            )
             evidence.append(ProviderResult(
                 provider="nvd",
-                status="success",
+                status=cve_status,
                 fetched_at=cve.get("last_updated", ""),
                 data={k: v for k, v in cve.items() if k != "last_updated"},
+                error=cve.get("error"),
             ))
 
         if "download_data" in result:
             dl = result["download_data"]
+            # None weekly_downloads means the registry fetch failed.
+            dl_status = (
+                "unavailable"
+                if dl.get("weekly_downloads") is None
+                else dl.get("status", "success")
+            )
             evidence.append(ProviderResult(
                 provider=dl.get("registry", "registry"),
-                status="success",
+                status=dl_status,
                 fetched_at="",
                 data=dict(dl),
+                error=dl.get("error"),
             ))
 
         warnings: list[str] = list(result.get("warnings", []))

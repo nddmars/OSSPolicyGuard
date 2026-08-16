@@ -22,13 +22,17 @@ The project follows a simple rule: higher scores are safer, and any penalty must
 
 ## Decision semantics
 
-| Decision | Score range | Conditions | Action |
-|----------|-------------|------------|--------|
-| APPROVED | ≥ 80 | No hard blocks | Safe to use |
-| REVIEW REQUIRED | 60–79 | Advisory flags or low sub-scores | Manual review needed |
-| PROHIBITED | Any | Malicious package, critical exploit with active EPSS, or hard policy rule | Block immediately |
+The decision depends on the package's **criticality level** (passed via `--criticality`) and its composite score. Default thresholds are defined in `config.yaml` under `scoring.thresholds` (critical: 90, high: 80, medium: 70, low: 60):
 
-A package with a high numeric score can still receive PROHIBITED if a hard-block condition is triggered (for example, a confirmed malicious-package flag or a KEV-listed vulnerability above the EPSS threshold).
+| Decision | Mission Critical | Business Critical | Non-Critical |
+|----------|-----------------|-------------------|--------------|
+| APPROVED | score ≥ 90 | score ≥ 80 | score ≥ 70 |
+| REVIEW | 80 ≤ score < 90 | 70 ≤ score < 80 | 60 ≤ score < 70 |
+| PROHIBITED | score < 80 | score < 70 | score < 60 |
+
+A confirmed malicious-package flag (`is_malicious=True` from the OSV/ossf malicious-packages feed) forces **PROHIBITED** regardless of the numeric score or criticality level.
+
+> **Roadmap:** The `PolicyBundle` in `src/osspolicyguard/policy.py` defines additional hard-block rules (KEV/EPSS threshold, security-score floor). These are not yet wired into the production `OSSScorer`; see the implementation note in the Scoring methodology section below.
 
 ## Limitations
 
@@ -68,28 +72,37 @@ osspolicyguard scan lodash --ecosystem npm --format sarif
 
 ### GitHub Actions
 
-A ready-to-use workflow lives at `.github/workflows/osspolicyguard-action.yml` and triggers on pull requests that touch `requirements.txt` or `package.json`. To add it to another repository:
+A workflow that runs on pull requests is provided at `.github/workflows/osspolicyguard-action.yml` **for use within this repository**. It triggers when `requirements.txt` or `package.json` changes and calls `scripts/osspolicyguard_action.py`.
 
-```yaml
-- uses: actions/checkout@v4
-- uses: actions/setup-python@v7
-  with:
-    python-version: '3.11'
-- run: pip install -e .
-- run: python scripts/osspolicyguard_action.py
-```
+> **Using OSSPolicyGuard in another repository:** The project is not yet published as a reusable GitHub Action or installable package. To integrate it today, check out the repository at a pinned commit and install it:
+> ```yaml
+> - uses: actions/checkout@v4
+>   with:
+>     repository: nddmars/OSSPolicyGuard
+>     ref: main          # pin to a specific commit SHA in production
+>     path: osspolicyguard
+> - run: pip install -e osspolicyguard/
+> - run: osspolicyguard scan <package> --ecosystem <eco>
+> ```
+> A proper composite action or published package is on the roadmap (OPG-073).
 
 ### Configuration
 
-The scanner reads `config.yaml` at startup. A JSON Schema for editor validation is provided at `config.schema.json`. To enable a jurisdiction compliance check, set `geo_compliance: true` in the `risk` section; it is disabled by default.
+The scanner reads `config.yaml` at startup. A JSON Schema for editor validation is provided at `config.schema.json`. To enable a jurisdiction compliance check, set `geo_compliance.enabled` in the `risk` section (it is disabled by default):
+
+```yaml
+risk:
+  geo_compliance:
+    enabled: true
+```
 
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | All packages APPROVED |
-| 1 | At least one package PROHIBITED |
-| 2 | At least one package REVIEW REQUIRED (when `--review-fails-ci` is set) |
+| 0 | Package APPROVED |
+| 1 | Package PROHIBITED |
+| 2 | REVIEW decision (when `--review-fails-ci` is set) **or** unsupported command (e.g. `manifest`) |
 | 3 | Configuration error |
 | 4 | Provider or network error |
 | 99 | Unexpected internal error |
@@ -98,12 +111,14 @@ The scanner reads `config.yaml` at startup. A JSON Schema for editor validation 
 
 Each package receives a composite score from 0 to 100 across four weighted dimensions:
 
-- **Security (35%)** — CVE severity, EPSS exploitability probability, KEV presence, OSV advisories, and malicious-package signals.
-- **Maintenance (30%)** — Commit recency, release cadence, open issue ratio, and bus-factor estimate.
-- **Supply-chain (20%)** — OpenSSF Scorecard sub-scores, provenance signals, and repository visibility.
-- **Community (15%)** — Download volume, dependent-package count, and contributor breadth.
+- **Security (35%)** — CVE severity bands (NVD v2), EPSS exploit-probability weighting, OSV advisories, malicious-package flag (ossf/malicious-packages), and OpenSSF Scorecard blended at 40%.
+- **Maintenance (30%)** — Days since last commit, bucketed into staleness tiers.
+- **Supply-chain (20%)** — Geopolitical risk from contributor locations, weighted by commit count.
+- **Community (15%)** — Weekly download count (npm/PyPI true weekly; other registries estimated) and GitHub star count.
 
-Hard blocks (malicious flag, critical CVE with active EPSS above threshold, explicit policy rule) override the numeric score and force a PROHIBITED decision regardless of total. See [REQUIREMENTS.md](REQUIREMENTS.md) for the full factor definitions, weight rationale, and threshold tables.
+> **Implementation note:** The `PolicyBundle`, `KevProvider`, `IdentityModel`, and modular provider classes (`github_provider.py`, `nvd_provider.py`) are part of the next-generation architecture and are not yet wired into the main scoring pipeline. The CLI currently calls the production `OSSScorer` / `OSSWorkflow` classes in `oss_scorer.py`. Provider stub files contain TODO comments indicating the integration work remaining. See [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for the full roadmap and implementation status.
+
+Hard block: a confirmed malicious-package flag (`is_malicious=True`) forces a PROHIBITED decision regardless of the numeric score.
 
 ## Architecture
 

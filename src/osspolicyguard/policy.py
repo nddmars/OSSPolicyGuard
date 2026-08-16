@@ -64,7 +64,8 @@ def evaluate_missing_data(value: Any, provider_status: str) -> DataPresence:
                            "absent" / "not_found"         → ABSENT
                            "stale" / "cached"             → STALE
                            "error" / "unavailable" /
-                           "timeout" / "rate_limited"     → UNAVAILABLE
+                           "timeout" / "rate_limited" /
+                           "rate_limit"                   → UNAVAILABLE
                            anything else                  → UNKNOWN
 
     Returns:
@@ -74,7 +75,7 @@ def evaluate_missing_data(value: Any, provider_status: str) -> DataPresence:
 
     absent_tokens = {"absent", "not_found"}
     stale_tokens = {"stale", "cached"}
-    unavailable_tokens = {"error", "unavailable", "timeout", "rate_limited"}
+    unavailable_tokens = {"error", "unavailable", "timeout", "rate_limited", "rate_limit"}
     ok_tokens = {"ok", "success", "present"}
 
     if normalised in absent_tokens:
@@ -118,9 +119,16 @@ def apply_missing_data_rule(presence: DataPresence, rule: "PolicyRule") -> str |
     """
     has_required_evidence = bool(rule.evidence_required)
 
-    if has_required_evidence and presence in (DataPresence.ABSENT, DataPresence.UNKNOWN):
+    # A required data source that is absent, unknown, or unavailable (provider
+    # outage / rate-limit) cannot satisfy the rule → abstain rather than allow.
+    if has_required_evidence and presence in (
+        DataPresence.ABSENT,
+        DataPresence.UNKNOWN,
+        DataPresence.UNAVAILABLE,
+    ):
         return "abstain"
 
+    # Optional provider is down → skip this rule silently for the current run.
     if presence is DataPresence.UNAVAILABLE and not has_required_evidence:
         return "skip"
 

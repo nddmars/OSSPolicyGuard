@@ -51,17 +51,33 @@ class StructuredFormatter(logging.Formatter):
 
 
 def configure_logging(level: str = "INFO", json_output: bool = False) -> None:
+    """Configure the root logger with secret redaction on every output handler.
+
+    Idempotent: calling more than once replaces any handler added by a previous
+    call to this function (identified by the ``_opg_handler`` attribute) rather
+    than adding duplicates.
+    """
+    redactor = RedactingFilter()
     handler = logging.StreamHandler()
+    # Attach the redaction filter to the handler so that records emitted by
+    # child loggers that propagate to this handler are always scrubbed,
+    # regardless of which logger they originate from.
+    handler.addFilter(redactor)
+    handler._opg_handler = True  # type: ignore[attr-defined]
+
     if json_output:
         handler.setFormatter(StructuredFormatter())
     else:
         handler.setFormatter(
             logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
         )
+
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    # Remove any previously registered OPG handler to stay idempotent.
+    root.handlers = [h for h in root.handlers if not getattr(h, "_opg_handler", False)]
     root.addHandler(handler)
-    root.addFilter(RedactingFilter())
 
 
 def get_logger(name: str) -> logging.Logger:
