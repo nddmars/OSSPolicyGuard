@@ -64,18 +64,21 @@ def scan_package(
     except ImportError:
         pass
 
-    # Build evidence and warnings from the legacy scorer result.
-    # EvaluationResult.from_legacy detects real provider failures rather than
-    # hardcoding "success" for every provider, which keeps the evidence section
-    # auditable and consistent with the project's central promise.
+    # Seed warnings from evaluate_component() so provider-failure notices are
+    # always present even if EvaluationResult.from_legacy() later raises.
+    warnings: list[str] = list(result.get("warnings", []))
+
+    # Build evidence from the legacy scorer result.  from_legacy() re-reads
+    # result["warnings"] so _eval.warnings already contains the provider warnings;
+    # we overwrite warnings here rather than appending to avoid duplicates.
     evidence: list[dict] = []
-    warnings: list[str] = []
     try:
         from .models import EvaluationResult
         _eval = EvaluationResult.from_legacy(result, package_name, ecosystem or "npm")
         evidence = [e.to_dict() for e in _eval.evidence]
         warnings = list(_eval.warnings)
     except Exception as exc:
+        # from_legacy failed; keep the provider warnings already captured above.
         warnings.append(f"Evidence construction error: {exc}")
 
     return {
@@ -108,6 +111,10 @@ def scan_package(
             result.get("osv_data", {}).get("is_malicious", False)
         ),
         "enforcement": enforcement,
+        # Expose safety fields added by evaluate_component() so JSON consumers
+        # can distinguish an ordinary policy review from incomplete security data.
+        "insufficient_data": bool(result.get("insufficient_data", False)),
+        "compliance": result.get("compliance", {}),
     }
 
 
@@ -295,12 +302,26 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 decision_raw = result.get("decision", "")
                 decision_md = _normalize_decision(decision_raw)
                 score_md = result.get("score", 0)
-                print(
-                    f"## OSSPolicyGuard Scan\n\n"
-                    f"**Package:** `{pkg_name}`\n\n"
-                    f"**Decision:** {decision_md}\n\n"
-                    f"**Score:** {score_md}/100"
-                )
+                md_lines = [
+                    "## OSSPolicyGuard Scan",
+                    "",
+                    f"**Package:** `{pkg_name}`",
+                    "",
+                    f"**Decision:** {decision_md}",
+                    "",
+                    f"**Score:** {score_md}/100",
+                ]
+                if result.get("insufficient_data"):
+                    md_lines += [
+                        "",
+                        "> ⚠️ **Insufficient data** — one or more security providers "
+                        "were unavailable; results may be incomplete.",
+                    ]
+                warnings_list = result.get("warnings", [])
+                if warnings_list:
+                    md_lines += ["", "**Provider warnings:**"]
+                    md_lines += [f"- {w}" for w in warnings_list]
+                print("\n".join(md_lines))
 
         else:
             # text format (default)
@@ -319,6 +340,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 f"Malicious package detected: "
                 f"{'Yes' if result['malicious_package_detected'] else 'No'}"
             )
+            if result.get("insufficient_data"):
+                print(
+                    "Insufficient data:  Yes "
+                    "(one or more security providers were unavailable)"
+                )
             findings = result.get("findings", [])
             if findings:
                 print()
@@ -328,10 +354,21 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                         f"  [{f.get('severity', '')}] "
                         f"{f.get('code', '')}: {f.get('title', '')}"
                     )
+            warnings_list = result.get("warnings", [])
+            if warnings_list:
+                print()
+                print(f"Provider warnings ({len(warnings_list)}):")
+                for w in warnings_list:
+                    print(f"  - {w}")
 
         normalized_decision = _normalize_decision(result["decision"])
         if normalized_decision == "PROHIBITED":
             return 1
+        # Exit 4 when required security providers were unavailable.  This takes
+        # precedence over --review-fails-ci so automation cannot mistake an
+        # incomplete scan for a successful one.
+        if result.get("insufficient_data"):
+            return 4
         if normalized_decision == "REVIEW" and args.review_fails_ci:
             return 2
         return 0

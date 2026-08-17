@@ -588,6 +588,23 @@ def to_markdown_pr(result: dict, changed_only: bool = False) -> str:
                 lines.append(f"| {provider} | {status} | {fetched} |")
         lines.append("")
 
+    # Insufficient-data banner
+    if result.get("insufficient_data"):
+        lines.append(
+            "> ⚠️ **Insufficient data** — one or more security providers "
+            "were unavailable; results may be incomplete."
+        )
+        lines.append("")
+
+    # Provider warnings
+    warnings_list: list[str] = result.get("warnings") or []
+    if warnings_list:
+        lines.append("**Provider warnings:**")
+        lines.append("")
+        for w in warnings_list:
+            lines.append(f"- {w}")
+        lines.append("")
+
     # Footer
     lines.append(
         f"_Powered by [OSSPolicyGuard]({_REPO_URL}) v{tool_version}_"
