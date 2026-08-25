@@ -131,7 +131,7 @@
 | 7.11 | Packagist: warn and return zero for missing vendor prefix | ✅ | `logger.warning`; does not raise |
 | 7.12 | Maven — download count | ❌ | Maven Central has no public download API; registry disabled |
 | 7.13 | All fetchers return `{weekly_downloads, period, registry}` | ✅ | Normalised structure regardless of underlying API period |
-| 7.14 | Return `None` gracefully on network failure | ✅ | `requests.RequestException` caught at dispatcher level |
+| 7.14 | Return error dict gracefully on network failure | ✅ | Returns `{'weekly_downloads': None, 'status': 'error', 'error': str(e), ...}`; callers guard against `weekly_downloads=None` |
 
 ---
 
@@ -174,8 +174,8 @@
 | 10.3 | **Security score** — OSV extra-advisory deduction | ✅ | −3 pts per GHSA/ecosystem advisory; capped at −20 pts (configurable) |
 | 10.4 | **Security score** — malicious package forces score to 0 | ✅ | Triggered by `is_malicious=True` + `auto_prohibit=True` |
 | 10.5 | **Security score** — OpenSSF Scorecard blended at 40% | ✅ | `0.6 × CVE_score + 0.4 × (scorecard × 10)` |
-| 10.6 | **Trust score** — project maturity via fork count (60% weight) | ✅ | >5K forks→100, >1K→80, >100→60, low→40, no data→50 neutral |
-| 10.7 | **Trust score** — geopolitical risk via contributor locations (40% weight) | ✅ | `_calculate_geo_risk_score()` — commit-weighted penalty |
+| 10.6 | **Trust score** — project maturity via fork count | ✅ | >5K forks→100, >1K→80, >100→60, low→40, no data→50 neutral; trust = maturity only |
+| 10.7 | **Geo-risk** — contributor locations collected and stored separately | ✅ | `_calculate_geo_risk_score()` — commit-weighted; stored in `compliance.geo_jurisdiction` (`affects_technical_score: false`); never blended into trust score |
 | 10.8 | **Community score** — weekly download count (70% weight) | ✅ | >1M→100, >100K→80, >10K→60, else→40 |
 | 10.9 | **Community score** — GitHub star count (30% weight) | ✅ | >10K→100, >1K→80, >100→60, else→40 |
 | 10.10 | Community score falls back to single signal when only one is available | ✅ | Downloads-only or stars-only handled separately |
@@ -216,7 +216,8 @@
 | 12.5 | Geopolitical risk matrix reference table | ✅ | `Geopolitical_Risk_Matrix` DataFrame |
 | 12.6 | Interactive criticality dropdown (Jupyter / ipywidgets) | ✅ | `OSSVisualizer.interactive_selector()` |
 | 12.7 | `show=False` mode for test-safe dashboard rendering | ✅ | Suppresses `plt.show()` in non-interactive environments |
-| 12.8 | Standalone CLI or REST API interface | ❌ | Jupyter/notebook only; future roadmap |
+| 12.8 | Standalone CLI | ✅ | `osspolicyguard scan <pkg>` — text / JSON / SARIF / Markdown output; `--ecosystem`, `--criticality`, `--repo-url`, `--review-fails-ci`; exit codes 0–4, 99; see section 23 |
+| 12.9a | REST API interface | ❌ | Future roadmap |
 | 12.9 | HTML / PDF report export | ❌ | Future roadmap |
 
 ---
@@ -225,7 +226,7 @@
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
-| 13.1 | Unit tests using `pytest` + `unittest.mock` | ✅ | 163 tests across 30 test classes |
+| 13.1 | Unit tests using `pytest` + `unittest.mock` | ✅ | 255 tests across `test_oss_scorer.py`, `test_round3_fixes.py`, `test_cli.py` |
 | 13.2 | Config loading tests (defaults, env overrides, missing file) | ✅ | `TestOSSConfig` — 4 tests |
 | 13.3 | GitHub URL parsing tests (valid, malformed, edge cases) | ✅ | `TestParseGitHubOwnerRepo` — 6 tests |
 | 13.4 | Header building tests | ✅ | `TestBuildHeaders` — 4 tests |
@@ -254,6 +255,8 @@
 | 13.27 | EPSS config threshold override test | ✅ | `TestEpssConfigThresholds` — 3 tests |
 | 13.28 | Scorecard enabled flag test | ✅ | `TestScorecardEnabledFlag` — 2 tests |
 | 13.29 | Score weights sum validation warning test | ✅ | `TestWeightsSumWarning` — 2 tests |
+| 13.32 | Provider safety / round-3 fix regression tests | ✅ | `test_round3_fixes.py` — 35 tests: decision contract, provider status, scorecard KeyError, NVD single-request, geo separation, evidence warnings, `RedactingFilter` types |
+| 13.33 | CLI integration tests | ✅ | `test_cli.py` — 12 tests: JSON/text/markdown output, exit codes 0–4, `insufficient_data`, `compliance`, `--review-fails-ci` precedence |
 | 13.30 | Integration / end-to-end tests with real API calls | ❌ | Future roadmap (requires API keys and network) |
 | 13.31 | Performance / load tests | ❌ | Future roadmap |
 
@@ -367,4 +370,34 @@ requirement are listed with their OPG ID.
 
 ---
 
-*Last updated: 2026-08-15 — 25 new requirements added (OPG-133–157); 213 tests passing.*
+---
+
+## 23. Command-Line Interface (OPG-067)
+
+| # | Requirement | Status | Notes |
+|---|---|---|---|
+| 23.1 | `osspolicyguard scan <package>` subcommand | ✅ | Evaluates a single package via `OSSWorkflow.evaluate_component()` |
+| 23.2 | `--ecosystem` flag (default: npm) | ✅ | Passed through to scorer; normalised before use |
+| 23.3 | `--criticality` flag (default: Business Critical) | ✅ | Normalised via `_normalize_criticality()`; rejects unknowns |
+| 23.4 | `--repo-url` flag | ✅ | Optional; forwarded to scorer for Scorecard and geo lookups |
+| 23.5 | `--format text` output (default) | ✅ | Human-readable: score, decision, dimensions, findings, warnings |
+| 23.6 | `--format json` output | ✅ | Machine-readable; schema version 1.0; includes all evidence, warnings, compliance |
+| 23.7 | `--format sarif` output | ✅ | Valid SARIF 2.1.0 via `reports.to_sarif()`; stub fallback if module absent |
+| 23.8 | `--format markdown` output | ✅ | GitHub PR comment Markdown via `reports.to_markdown_pr()`; includes insufficient-data banner and warnings |
+| 23.9 | `--review-fails-ci` flag | ✅ | Exit 2 on REVIEW decision; suppressed when `insufficient_data=True` (exit 4 takes precedence) |
+| 23.10 | Exit code 0 — APPROVED | ✅ | Package meets policy threshold |
+| 23.11 | Exit code 1 — PROHIBITED | ✅ | Package prohibited by policy or malicious flag |
+| 23.12 | Exit code 2 — REVIEW (CI enforcement) | ✅ | Only when `--review-fails-ci` and `insufficient_data=False` |
+| 23.13 | Exit code 3 — configuration error | ✅ | Missing dependency or misconfiguration |
+| 23.14 | Exit code 4 — provider / network error | ✅ | `insufficient_data=True` (NVD or OSV unavailable) OR network exception |
+| 23.15 | Exit code 99 — unexpected internal error | ✅ | Unhandled exception |
+| 23.16 | `insufficient_data` field in JSON output | ✅ | `true` when a security provider was unavailable; signals incomplete scan |
+| 23.17 | `compliance` field in JSON output | ✅ | Contains `geo_jurisdiction` sub-section when geo enabled |
+| 23.18 | Provider warnings in all output formats | ✅ | Text, JSON, Markdown; lists each named provider failure |
+| 23.19 | `osspolicyguard version` subcommand | ✅ | Prints installed package version and exits 0 |
+| 23.20 | `osspolicyguard manifest` subcommand (placeholder) | ✅ | Returns exit 2 with "not yet implemented" message (OPG-068) |
+| 23.21 | `--log-level` flag | ✅ | DEBUG / INFO / WARNING / ERROR; wires into `configure_logging()` with secret-redacting filter |
+
+---
+
+*Last updated: 2026-08-25 — CLI section 23 added; 255 tests passing.*

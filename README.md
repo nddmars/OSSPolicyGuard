@@ -113,7 +113,7 @@ Each package receives a composite score from 0 to 100 across four weighted dimen
 
 - **Security (35%)** — CVE severity bands (NVD v2), EPSS exploit-probability weighting, OSV advisories, malicious-package flag (ossf/malicious-packages), and OpenSSF Scorecard blended at 40%.
 - **Maintenance (30%)** — Days since last commit, bucketed into staleness tiers.
-- **Supply-chain (20%)** — Geopolitical risk from contributor locations, weighted by commit count.
+- **Supply-chain (20%)** — Project maturity via fork count. Contributor geolocation data is collected when enabled and reported separately in the `compliance.geo_jurisdiction` JSON field; it does not affect the technical score.
 - **Community (15%)** — Weekly download count (npm/PyPI true weekly; other registries estimated) and GitHub star count.
 
 > **Implementation note:** The `PolicyBundle`, `KevProvider`, `IdentityModel`, and modular provider classes (`github_provider.py`, `nvd_provider.py`) are part of the next-generation architecture and are not yet wired into the main scoring pipeline. The CLI currently calls the production `OSSScorer` / `OSSWorkflow` classes in `oss_scorer.py`. Provider stub files contain TODO comments indicating the integration work remaining. See [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for the full roadmap and implementation status.
