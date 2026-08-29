@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nddmars/OSSPolicyGuard/raw/main/config.schema.json",
+  "title": "OSSPolicyGuard Configuration Schema",
+  "description": "Validates config.yaml for OSSPolicyGuard v0.1.x. Unknown top-level keys are rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "nvd": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "api_key": {
+          "type": "string"
+        },
+        "rate_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 5
+        }
+      }
+    },
+    "github": {
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10
+        }
+      }
+    },
+    "scoring": {
+      "type": "object",
+      "properties": {
+        "weights": {
+          "type": "object",
+          "properties": {
+            "activity": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "trust": {
+              "type": "integer"
+            },
+            "security": {
+              "type": "integer"
+            },
+            "community": {
+              "type": "integer"
+            }
+          }
+        },
+        "thresholds": {
+          "type": "object",
+          "properties": {
+            "critical": {
+              "type": "integer"
+            },
+            "high": {
+              "type": "integer"
+            },
+            "medium": {
+              "type": "integer"
+            },
+            "low": {
+              "type": "integer"
+            }
+          }
+        },
+        "community": {
+          "type": "object",
+          "properties": {
+            "weekly_high": {
+              "type": "integer"
+            },
+            "weekly_med": {
+              "type": "integer"
+            },
+            "weekly_low": {
+              "type": "integer"
+            },
+            "download_weight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "star_weight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
+    "risk": {
+      "type": "object"
+    },
+    "registries": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "timeout": {
+            "type": "integer"
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "epss": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "timeout": {
+          "type": "integer"
+        },
+        "high_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "med_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "scorecard": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "timeout": {
+          "type": "integer"
+        }
+      }
+    },
+    "osv": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "timeout": {
+          "type": "integer"
+        },
+        "extra_advisory_deduction": {
+          "type": "integer"
+        },
+        "extra_advisory_max_penalty": {
+          "type": "integer"
+        }
+      }
+    },
+    "malicious_packages": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "auto_prohibit": {
+          "type": "boolean"
+        }
+      }
+    },
+    "geocoding": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_contributors": {
+          "type": "integer"
+        },
+        "nominatim_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "user_agent": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
