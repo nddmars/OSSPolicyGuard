@@ -31,12 +31,29 @@ def _fake_approved(package_name, ecosystem=None, **_kwargs):
 
 
 def test_cli_json_output(monkeypatch, capsys):
-    def fake_scan_package(package_name, ecosystem=None, criticality="Non-Critical", repo_url=None, review_fails_ci=False):
+    def fake_scan_package(
+        package_name,
+        ecosystem=None,
+        criticality="Non-Critical",
+        repo_url=None,
+        review_fails_ci=False,
+    ):
         return _fake_approved(package_name, ecosystem)
 
     monkeypatch.setattr(cli, "scan_package", fake_scan_package)
 
-    exit_code = cli.main(["scan", "express", "--ecosystem", "npm", "--criticality", "Business Critical", "--format", "json"])
+    exit_code = cli.main(
+        [
+            "scan",
+            "express",
+            "--ecosystem",
+            "npm",
+            "--criticality",
+            "Business Critical",
+            "--format",
+            "json",
+        ]
+    )
 
     assert exit_code == 0
     body = json.loads(capsys.readouterr().out)
@@ -45,7 +62,13 @@ def test_cli_json_output(monkeypatch, capsys):
 
 
 def test_cli_human_output(monkeypatch, capsys):
-    def fake_scan_package(package_name, ecosystem=None, criticality="Non-Critical", repo_url=None, review_fails_ci=False):
+    def fake_scan_package(
+        package_name,
+        ecosystem=None,
+        criticality="Non-Critical",
+        repo_url=None,
+        review_fails_ci=False,
+    ):
         return _fake_approved(package_name, ecosystem)
 
     monkeypatch.setattr(cli, "scan_package", fake_scan_package)
@@ -60,7 +83,13 @@ def test_cli_human_output(monkeypatch, capsys):
 
 
 def test_cli_review_fails_ci_exit_code(monkeypatch, capsys):
-    def fake_scan_package(package_name, ecosystem=None, criticality="Non-Critical", repo_url=None, review_fails_ci=False):
+    def fake_scan_package(
+        package_name,
+        ecosystem=None,
+        criticality="Non-Critical",
+        repo_url=None,
+        review_fails_ci=False,
+    ):
         return {
             "schema_version": "1.0",
             "tool_version": "0.1.0",
@@ -69,7 +98,12 @@ def test_cli_review_fails_ci_exit_code(monkeypatch, capsys):
             "package": {"name": package_name, "ecosystem": "npm", "version": None},
             "score": 72,
             "decision": "REVIEW",
-            "dimensions": {"security": 70, "maintenance": 75, "community": 65, "supply_chain_risk": 60},
+            "dimensions": {
+                "security": 70,
+                "maintenance": 75,
+                "community": 65,
+                "supply_chain_risk": 60,
+            },
             "findings": [],
             "evidence": [],
             "warnings": [],
@@ -89,7 +123,13 @@ def test_cli_review_fails_ci_exit_code(monkeypatch, capsys):
 
 
 def test_cli_prohibited_returns_nonzero(monkeypatch, capsys):
-    def fake_scan_package(package_name, ecosystem=None, criticality="Non-Critical", repo_url=None, review_fails_ci=False):
+    def fake_scan_package(
+        package_name,
+        ecosystem=None,
+        criticality="Non-Critical",
+        repo_url=None,
+        review_fails_ci=False,
+    ):
         return {
             "schema_version": "1.0",
             "tool_version": "0.1.0",
@@ -98,7 +138,12 @@ def test_cli_prohibited_returns_nonzero(monkeypatch, capsys):
             "package": {"name": package_name, "ecosystem": "npm", "version": None},
             "score": 30,
             "decision": "PROHIBITED",
-            "dimensions": {"security": 10, "maintenance": 20, "community": 30, "supply_chain_risk": 25},
+            "dimensions": {
+                "security": 10,
+                "maintenance": 20,
+                "community": 30,
+                "supply_chain_risk": 25,
+            },
             "findings": [],
             "evidence": [],
             "warnings": [],
@@ -124,6 +169,7 @@ def test_cli_invalid_command_returns_help(capsys):
 # ---------------------------------------------------------------------------
 # Round-5 CLI integration tests: insufficient_data and compliance fields
 # ---------------------------------------------------------------------------
+
 
 def test_json_includes_insufficient_data(monkeypatch, capsys):
     """JSON output must include 'insufficient_data' field."""
@@ -205,3 +251,79 @@ def test_markdown_output_shows_insufficient_data_warning(monkeypatch, capsys):
     cli.main(["scan", "lodash", "--format", "markdown"])
     output = capsys.readouterr().out
     assert "Insufficient data" in output or "insufficient" in output.lower()
+
+
+# ---------------------------------------------------------------------------
+# manifest subcommand (OPG-068)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_manifest_dependencies_requirements_txt(tmp_path):
+    manifest = tmp_path / "requirements.txt"
+    manifest.write_text("# comment\nrequests>=2.31\nPyYAML==6.0  # inline comment\n\npandas\n")
+    deps = cli.parse_manifest_dependencies(str(manifest))
+    assert deps == ["requests", "PyYAML", "pandas"]
+
+
+def test_parse_manifest_dependencies_package_json(tmp_path):
+    manifest = tmp_path / "package.json"
+    manifest.write_text(
+        json.dumps({"dependencies": {"express": "^4.0.0"}, "devDependencies": {"jest": "^29.0.0"}})
+    )
+    deps = cli.parse_manifest_dependencies(str(manifest))
+    assert deps == ["express", "jest"]
+
+
+def test_detect_manifest_explicit_path():
+    path, eco = cli._detect_manifest("some/package.json")
+    assert (path, eco) == ("some/package.json", "npm")
+    path, eco = cli._detect_manifest("some/requirements.txt")
+    assert (path, eco) == ("some/requirements.txt", "pypi")
+
+
+def test_scan_manifest_json_output(tmp_path, monkeypatch, capsys):
+    manifest = tmp_path / "requirements.txt"
+    manifest.write_text("express\nlodash\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "scan_package", _fake_approved)
+
+    exit_code = cli.main(["manifest", str(manifest), "--format", "json"])
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload) == 2
+    assert {r["package"]["name"] for r in payload} == {"express", "lodash"}
+
+
+def test_scan_manifest_text_output(tmp_path, monkeypatch, capsys):
+    manifest = tmp_path / "requirements.txt"
+    manifest.write_text("express\n")
+    monkeypatch.setattr(cli, "scan_package", _fake_approved)
+
+    exit_code = cli.main(["manifest", str(manifest)])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "express" in output
+    assert "APPROVED" in output
+
+
+def test_scan_manifest_prohibited_aggregates_exit_1(tmp_path, monkeypatch, capsys):
+    manifest = tmp_path / "requirements.txt"
+    manifest.write_text("evil-package\n")
+
+    def _fake_prohibited(package_name, ecosystem=None, **_kwargs):
+        result = _fake_approved(package_name, ecosystem)
+        result["decision"] = "PROHIBITED"
+        result["malicious_package_detected"] = True
+        return result
+
+    monkeypatch.setattr(cli, "scan_package", _fake_prohibited)
+    exit_code = cli.main(["manifest", str(manifest), "--format", "json"])
+    assert exit_code == 1
+
+
+def test_scan_manifest_missing_manifest_returns_exit_3(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    exit_code = cli.main(["manifest"])
+    assert exit_code == 3

@@ -4,6 +4,7 @@ Merges raw advisories from heterogeneous sources (OSV, NVD, GHSA, vendor
 feeds) into a single, deduplicated list of Advisory objects using union-find
 on shared IDs and alias sets.
 """
+
 from __future__ import annotations
 
 import re
@@ -15,9 +16,9 @@ from typing import Any
 # ID pattern matchers
 # ---------------------------------------------------------------------------
 
-CVE_RE = re.compile(r'CVE-\d{4}-\d{4,}', re.I)
-GHSA_RE = re.compile(r'GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}', re.I)
-MAL_RE = re.compile(r'MAL-\d{4}-\d+', re.I)
+CVE_RE = re.compile(r"CVE-\d{4}-\d{4,}", re.I)
+GHSA_RE = re.compile(r"GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}", re.I)
+MAL_RE = re.compile(r"MAL-\d{4}-\d+", re.I)
 
 # ---------------------------------------------------------------------------
 # Severity ranking (higher number = more severe)
@@ -55,13 +56,13 @@ class Advisory:
         return {
             "canonical_id": self.canonical_id,
             "aliases": sorted(self.aliases),
-            "severity": self.severity,          # None serialises to null in JSON
-            "cvss_score": self.cvss_score,      # None serialises to null in JSON
+            "severity": self.severity,  # None serialises to null in JSON
+            "cvss_score": self.cvss_score,  # None serialises to null in JSON
             "affected_versions": self.affected_versions,
             "fixed_versions": self.fixed_versions,
             "references": self.references,
             "sources": self.sources,
-            "modified": self.modified,          # None serialises to null in JSON
+            "modified": self.modified,  # None serialises to null in JSON
             "is_malicious": self.is_malicious,
         }
 
@@ -166,7 +167,7 @@ def deduplicate_advisories(raw_advisories: list[dict]) -> list[Advisory]:
 
     def _find(x: str) -> str:
         if parent.setdefault(x, x) != x:
-            parent[x] = _find(parent[x])   # path compression
+            parent[x] = _find(parent[x])  # path compression
         return parent[x]
 
     def _union(x: str, y: str) -> None:
@@ -176,7 +177,7 @@ def deduplicate_advisories(raw_advisories: list[dict]) -> list[Advisory]:
 
     for ids in id_sets:
         for id_ in ids:
-            _find(id_)                      # initialise entry
+            _find(id_)  # initialise entry
         id_list = list(ids)
         for i in range(1, len(id_list)):
             _union(id_list[0], id_list[i])
@@ -253,18 +254,20 @@ def deduplicate_advisories(raw_advisories: list[dict]) -> list[Advisory]:
         canonical = _canonical_id(all_ids) if all_ids else root
         aliases = all_ids - {canonical}
 
-        result.append(Advisory(
-            canonical_id=canonical,
-            aliases=aliases,
-            severity=severity,
-            cvss_score=cvss_score,
-            affected_versions=affected_versions,
-            fixed_versions=fixed_versions,
-            references=references,
-            sources=sources,
-            modified=modified,
-            is_malicious=is_malicious,
-        ))
+        result.append(
+            Advisory(
+                canonical_id=canonical,
+                aliases=aliases,
+                severity=severity,
+                cvss_score=cvss_score,
+                affected_versions=affected_versions,
+                fixed_versions=fixed_versions,
+                references=references,
+                sources=sources,
+                modified=modified,
+                is_malicious=is_malicious,
+            )
+        )
 
     return result
 
@@ -295,30 +298,34 @@ def merge_osv_nvd(osv_data: dict, nvd_cves: list[dict]) -> list[Advisory]:
     raw_advisories: list[dict] = []
 
     for v in osv_data.get("vulns", []):
-        raw_advisories.append({
-            "id": v.get("id", ""),
-            "aliases": v.get("aliases", []),
-            "severity": None,
-            "cvss_score": None,
-            "affected_versions": [],
-            "fixed_versions": [],
-            "references": [],
-            "source": "osv",
-            "modified": v.get("modified"),
-        })
+        raw_advisories.append(
+            {
+                "id": v.get("id", ""),
+                "aliases": v.get("aliases", []),
+                "severity": None,
+                "cvss_score": None,
+                "affected_versions": [],
+                "fixed_versions": [],
+                "references": [],
+                "source": "osv",
+                "modified": v.get("modified"),
+            }
+        )
 
     for c in nvd_cves:
-        raw_advisories.append({
-            "id": c.get("id", ""),
-            "aliases": [],
-            "severity": c.get("severity"),
-            "cvss_score": c.get("cvss_score"),
-            "affected_versions": [],
-            "fixed_versions": [],
-            "references": [],
-            "source": "nvd",
-            "modified": None,
-        })
+        raw_advisories.append(
+            {
+                "id": c.get("id", ""),
+                "aliases": [],
+                "severity": c.get("severity"),
+                "cvss_score": c.get("cvss_score"),
+                "affected_versions": [],
+                "fixed_versions": [],
+                "references": [],
+                "source": "nvd",
+                "modified": None,
+            }
+        )
 
     return deduplicate_advisories(raw_advisories)
 

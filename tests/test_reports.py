@@ -6,12 +6,17 @@ from jsonschema import validate
 from osspolicyguard import __version__
 from osspolicyguard import cli
 
-
 test_root = Path(__file__).resolve().parents[0]
 
 
 def test_schema_fields_present(monkeypatch, capsys):
-    def fake_scan_package(package_name, ecosystem=None, criticality="Non-Critical", repo_url=None, review_fails_ci=False):
+    def fake_scan_package(
+        package_name,
+        ecosystem=None,
+        criticality="Non-Critical",
+        repo_url=None,
+        review_fails_ci=False,
+    ):
         return {
             "schema_version": "1.0",
             "tool_version": __version__,
@@ -20,7 +25,12 @@ def test_schema_fields_present(monkeypatch, capsys):
             "package": {"name": package_name, "ecosystem": ecosystem or "npm", "version": None},
             "decision": "APPROVED",
             "score": 84,
-            "dimensions": {"security": 88, "maintenance": 79, "community": 91, "supply_chain_risk": 76},
+            "dimensions": {
+                "security": 88,
+                "maintenance": 79,
+                "community": 91,
+                "supply_chain_risk": 76,
+            },
             "findings": [],
             "evidence": [],
             "warnings": [],
@@ -42,7 +52,13 @@ def test_schema_fields_present(monkeypatch, capsys):
 
 
 def test_schema_validates_against_schema(monkeypatch, capsys):
-    def fake_scan_package(package_name, ecosystem=None, criticality="Non-Critical", repo_url=None, review_fails_ci=False):
+    def fake_scan_package(
+        package_name,
+        ecosystem=None,
+        criticality="Non-Critical",
+        repo_url=None,
+        review_fails_ci=False,
+    ):
         return {
             "schema_version": "1.0",
             "tool_version": __version__,
@@ -51,7 +67,12 @@ def test_schema_validates_against_schema(monkeypatch, capsys):
             "package": {"name": package_name, "ecosystem": ecosystem or "npm", "version": None},
             "decision": "APPROVED",
             "score": 84,
-            "dimensions": {"security": 88, "maintenance": 79, "community": 91, "supply_chain_risk": 76},
+            "dimensions": {
+                "security": 88,
+                "maintenance": 79,
+                "community": 91,
+                "supply_chain_risk": 76,
+            },
             "findings": [],
             "evidence": [],
             "warnings": [],
@@ -65,12 +86,20 @@ def test_schema_validates_against_schema(monkeypatch, capsys):
     assert exit_code == 0
     body = json.loads(capsys.readouterr().out)
 
-    schema = json.loads((Path(__file__).resolve().parents[1] / "schema.json").read_text(encoding="utf-8"))
+    schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "schema.json").read_text(encoding="utf-8")
+    )
     validate(instance=body, schema=schema)
 
 
 def test_golden_output_matches_snapshot(monkeypatch, capsys):
-    def fake_scan_package(package_name, ecosystem=None, criticality="Non-Critical", repo_url=None, review_fails_ci=False):
+    def fake_scan_package(
+        package_name,
+        ecosystem=None,
+        criticality="Non-Critical",
+        repo_url=None,
+        review_fails_ci=False,
+    ):
         return {
             "schema_version": "1.0",
             "tool_version": __version__,
@@ -79,7 +108,12 @@ def test_golden_output_matches_snapshot(monkeypatch, capsys):
             "package": {"name": package_name, "ecosystem": ecosystem or "npm", "version": None},
             "decision": "APPROVED",
             "score": 84,
-            "dimensions": {"security": 88, "maintenance": 79, "community": 91, "supply_chain_risk": 76},
+            "dimensions": {
+                "security": 88,
+                "maintenance": 79,
+                "community": 91,
+                "supply_chain_risk": 76,
+            },
             "findings": [],
             "evidence": [],
             "warnings": [],
@@ -93,5 +127,9 @@ def test_golden_output_matches_snapshot(monkeypatch, capsys):
     assert exit_code == 0
     body = json.loads(capsys.readouterr().out)
 
-    expected = json.loads((Path(__file__).resolve().parents[0] / "golden" / "small_result.json").read_text(encoding="utf-8"))
+    expected = json.loads(
+        (Path(__file__).resolve().parents[0] / "golden" / "small_result.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert body == expected

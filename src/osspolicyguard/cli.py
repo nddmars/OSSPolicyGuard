@@ -60,6 +60,7 @@ def scan_package(
     findings: list[dict] = []
     try:
         from .reports import build_findings
+
         findings = build_findings(result)
     except ImportError:
         pass
@@ -74,6 +75,7 @@ def scan_package(
     evidence: list[dict] = []
     try:
         from .models import EvaluationResult
+
         _eval = EvaluationResult.from_legacy(result, package_name, ecosystem or "npm")
         evidence = [e.to_dict() for e in _eval.evidence]
         warnings = list(_eval.warnings)
@@ -84,9 +86,9 @@ def scan_package(
     return {
         "schema_version": "1.0",
         "tool_version": __import__("osspolicyguard").__version__,
-        "generated_at": __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ).isoformat(),
+        "generated_at": __import__("datetime")
+        .datetime.now(__import__("datetime").timezone.utc)
+        .isoformat(),
         "policy": {
             "name": "default",
             "version": "0.1.0",
@@ -107,9 +109,7 @@ def scan_package(
         "findings": findings,
         "evidence": evidence,
         "warnings": warnings,
-        "malicious_package_detected": bool(
-            result.get("osv_data", {}).get("is_malicious", False)
-        ),
+        "malicious_package_detected": bool(result.get("osv_data", {}).get("is_malicious", False)),
         "enforcement": enforcement,
         # Expose safety fields added by evaluate_component() so JSON consumers
         # can distinguish an ordinary policy review from incomplete security data.
@@ -136,9 +136,7 @@ def _sarif_stub(result: dict[str, Any]) -> dict[str, Any]:
         policy_sub.get("name") if isinstance(policy_sub, dict) else str(policy_sub)
     ) or "default"
     return {
-        "$schema": (
-            "https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-schema-2.1.0.json"
-        ),
+        "$schema": ("https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-schema-2.1.0.json"),
         "version": "2.1.0",
         "runs": [
             {
@@ -161,24 +159,124 @@ def _sarif_stub(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def scan_manifest(argv: list[str] | None = None) -> int:
-    """Placeholder for OPG-068: manifest scanning not yet implemented."""
-    import sys
-    print(
-        "osspolicyguard manifest: not yet implemented (OPG-068).\n"
-        "Use 'osspolicyguard scan <package>' to evaluate a single package.",
-        file=sys.stderr,
+def parse_manifest_dependencies(manifest_path: str) -> list[str]:
+    """Extract dependency package names from a package.json or requirements.txt file.
+
+    OPG-068: manifest / multi-package batch evaluation. Mirrors the parsing
+    logic in scripts/osspolicyguard_action.py so both entry points agree on
+    what counts as a dependency.
+    """
+    import json as _json
+    import re as _re
+    from pathlib import Path as _Path
+
+    path = _Path(manifest_path)
+    if path.suffix == ".json":
+        data = _json.loads(path.read_text(encoding="utf-8"))
+        deps: list[str] = []
+        for section in ("dependencies", "devDependencies"):
+            deps.extend(data.get(section, {}).keys())
+        return sorted(set(deps))
+
+    deps = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        match = _re.match(r"^([A-Za-z0-9_.-]+)", line)
+        if match:
+            deps.append(match.group(1))
+    return deps
+
+
+def _detect_manifest(explicit_path: str | None) -> tuple[str, str]:
+    """Return (manifest_path, ecosystem), auto-detecting when not given explicitly."""
+    from pathlib import Path as _Path
+
+    if explicit_path:
+        ecosystem = "npm" if explicit_path.endswith(".json") else "pypi"
+        return explicit_path, ecosystem
+    if _Path("package.json").exists():
+        return "package.json", "npm"
+    if _Path("requirements.txt").exists():
+        return "requirements.txt", "pypi"
+    raise FileNotFoundError(
+        "No manifest found (looked for package.json, requirements.txt); pass a path explicitly."
     )
-    return 2  # unsupported-operation — distinct from REVIEW (only set with --review-fails-ci)
+
+
+def scan_manifest(
+    manifest_path: str | None = None,
+    ecosystem: str | None = None,
+    criticality: str = "Business Critical",
+    fmt: str = "text",
+    review_fails_ci: bool = False,
+) -> int:
+    """Scan every dependency declared in a manifest file (OPG-068).
+
+    Evaluates each dependency via scan_package() and aggregates the worst-case
+    exit code across all packages, using the same precedence as a single scan
+    (see main()'s exit-code contract): PROHIBITED > insufficient_data > REVIEW.
+    """
+    try:
+        path, detected_ecosystem = _detect_manifest(manifest_path)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
+
+    eco = ecosystem or detected_ecosystem
+    try:
+        packages = parse_manifest_dependencies(path)
+    except (OSError, ValueError) as exc:
+        print(f"Failed to parse manifest {path!r}: {exc}", file=sys.stderr)
+        return 3
+
+    results = [
+        scan_package(
+            package_name=package_name,
+            ecosystem=eco,
+            criticality=criticality,
+            review_fails_ci=review_fails_ci,
+        )
+        for package_name in packages
+    ]
+
+    if fmt == "json":
+        print(json.dumps(results, indent=2))
+    else:
+        print(f"Manifest: {path} ({eco}, {len(results)} package(s))")
+        print()
+        for result in results:
+            pkg = result["package"]
+            flags = []
+            if result.get("insufficient_data"):
+                flags.append("insufficient-data")
+            if result.get("malicious_package_detected"):
+                flags.append("MALICIOUS")
+            suffix = f" [{', '.join(flags)}]" if flags else ""
+            print(f"  {pkg['name']:<30} {result['score']:>6}/100  {result['decision']:<11}{suffix}")
+
+    worst_exit = 0
+    for result in results:
+        decision = _normalize_decision(result["decision"])
+        if decision == "PROHIBITED":
+            return 1
+        if result.get("insufficient_data"):
+            worst_exit = max(worst_exit, 4)
+        elif decision == "REVIEW" and review_fails_ci:
+            worst_exit = max(worst_exit, 2)
+    return worst_exit
 
 
 def _get_version() -> str:
     try:
         import importlib.metadata
+
         return importlib.metadata.version("osspolicyguard")
     except Exception:
         try:
             import osspolicyguard
+
             return osspolicyguard.__version__
         except Exception:
             return "0.1.0"
@@ -204,9 +302,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # scan subcommand  (OPG-067)
     scan_parser = subparsers.add_parser("scan", help="Evaluate a single package.")
     scan_parser.add_argument("package", help="Package name to evaluate.")
-    scan_parser.add_argument(
-        "--ecosystem", default="npm", help="Package ecosystem (default: npm)."
-    )
+    scan_parser.add_argument("--ecosystem", default="npm", help="Package ecosystem (default: npm).")
     scan_parser.add_argument(
         "--criticality",
         default="Business Critical",
@@ -231,10 +327,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print version and exit.",
     )
 
-    # manifest subcommand  (OPG-068 placeholder)
-    subparsers.add_parser(
-        "manifest",
-        help="Scan a dependency manifest file (not yet implemented; see OPG-068).",
+    # manifest subcommand  (OPG-068)
+    manifest_parser = subparsers.add_parser(
+        "manifest", help="Scan every dependency declared in a manifest file."
+    )
+    manifest_parser.add_argument(
+        "path",
+        nargs="?",
+        help="Manifest file to scan (default: auto-detect package.json or requirements.txt).",
+    )
+    manifest_parser.add_argument(
+        "--ecosystem", help="Override the ecosystem inferred from the manifest file type."
+    )
+    manifest_parser.add_argument(
+        "--criticality",
+        default="Business Critical",
+        help="Business criticality level applied to every dependency.",
+    )
+    manifest_parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format: text, json (default: text).",
+    )
+    manifest_parser.add_argument(
+        "--review-fails-ci",
+        action="store_true",
+        help="Treat any REVIEW decision as a CI failure (exit code 2).",
     )
 
     return parser
@@ -252,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         log_level: str = getattr(args, "log_level", "WARNING")
         try:
             from .logging_config import configure_logging
+
             configure_logging(level=log_level, json_output=False)
         except ImportError:
             logging.basicConfig(
@@ -265,7 +385,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
             return 0
 
         if args.command == "manifest":
-            return scan_manifest()
+            return scan_manifest(
+                manifest_path=args.path,
+                ecosystem=args.ecosystem,
+                criticality=args.criticality,
+                fmt=args.format,
+                review_fails_ci=args.review_fails_ci,
+            )
 
         if args.command != "scan":
             parser.print_help()
@@ -287,6 +413,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
             sarif_doc: dict[str, Any]
             try:
                 from .reports import to_sarif
+
                 sarif_doc = to_sarif(result)
             except ImportError:
                 sarif_doc = _sarif_stub(result)
@@ -295,6 +422,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         elif fmt == "markdown":
             try:
                 from .reports import to_markdown_pr
+
                 print(to_markdown_pr(result))
             except ImportError:
                 pkg = result.get("package") or {}
@@ -342,8 +470,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
             )
             if result.get("insufficient_data"):
                 print(
-                    "Insufficient data:  Yes "
-                    "(one or more security providers were unavailable)"
+                    "Insufficient data:  Yes " "(one or more security providers were unavailable)"
                 )
             findings = result.get("findings", [])
             if findings:
@@ -351,8 +478,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 print(f"Findings ({len(findings)}):")
                 for f in findings:
                     print(
-                        f"  [{f.get('severity', '')}] "
-                        f"{f.get('code', '')}: {f.get('title', '')}"
+                        f"  [{f.get('severity', '')}] " f"{f.get('code', '')}: {f.get('title', '')}"
                     )
             warnings_list = result.get("warnings", [])
             if warnings_list:
@@ -374,9 +500,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         return 0
 
     except ImportError as exc:
-        logging.getLogger(__name__).error(
-            "Configuration error — missing dependency: %s", exc
-        )
+        logging.getLogger(__name__).error("Configuration error — missing dependency: %s", exc)
         return 3
     except (ConnectionError, TimeoutError, urllib.error.URLError) as exc:
         logging.getLogger(__name__).error("Network error: %s", exc)

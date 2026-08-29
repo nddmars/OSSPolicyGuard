@@ -220,7 +220,4 @@ class InternalError(OSSPolicyGuardError):
     def user_message(self) -> str:
         """Return a human-readable message that includes a link to the issue tracker."""
         base = super().user_message()
-        return (
-            f"{base}  "
-            "Please report this at https://github.com/nddmars/OSSPolicyGuard/issues"
-        )
+        return f"{base}  " "Please report this at https://github.com/nddmars/OSSPolicyGuard/issues"

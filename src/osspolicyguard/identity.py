@@ -54,9 +54,7 @@ class PackageUrl:
         Raises InvalidPackageUrlError if the string is malformed.
         """
         if not isinstance(purl, str) or not purl:
-            raise InvalidPackageUrlError(
-                f"Package URL must be a non-empty string, got {purl!r}"
-            )
+            raise InvalidPackageUrlError(f"Package URL must be a non-empty string, got {purl!r}")
 
         match = _PURL_RE.match(purl)
         if match is None:
@@ -74,22 +72,16 @@ class PackageUrl:
         # The last path segment is always the name; everything before is namespace
         parts = remainder.split("/")
         if not parts or parts[-1] == "":
-            raise InvalidPackageUrlError(
-                f"Package URL is missing a package name: {purl!r}"
-            )
+            raise InvalidPackageUrlError(f"Package URL is missing a package name: {purl!r}")
 
         raw_name = urllib.parse.unquote(parts[-1])
         if not raw_name:
-            raise InvalidPackageUrlError(
-                f"Package URL has an empty package name: {purl!r}"
-            )
+            raise InvalidPackageUrlError(f"Package URL has an empty package name: {purl!r}")
 
         namespace_parts = parts[:-1]
         namespace: Optional[str]
         if namespace_parts:
-            decoded_ns = "/".join(
-                urllib.parse.unquote(p) for p in namespace_parts
-            )
+            decoded_ns = "/".join(urllib.parse.unquote(p) for p in namespace_parts)
             namespace = decoded_ns if decoded_ns else None
         else:
             namespace = None
@@ -110,9 +102,7 @@ class PackageUrl:
                 key, _, val = pair.partition("=")
                 key = key.strip().lower()
                 if not key:
-                    raise InvalidPackageUrlError(
-                        f"Qualifier has empty key in {purl!r}"
-                    )
+                    raise InvalidPackageUrlError(f"Qualifier has empty key in {purl!r}")
                 qualifiers[key] = urllib.parse.unquote(val)
 
         subpath: Optional[str]
@@ -141,8 +131,7 @@ class PackageUrl:
 
         if self.namespace is not None:
             ns_encoded = "/".join(
-                urllib.parse.quote(seg, safe="")
-                for seg in self.namespace.split("/")
+                urllib.parse.quote(seg, safe="") for seg in self.namespace.split("/")
             )
             parts.append(f"{ns_encoded}/")
 
@@ -154,8 +143,7 @@ class PackageUrl:
         if self.qualifiers:
             # Sort qualifiers for deterministic output
             qs = "&".join(
-                f"{k}={urllib.parse.quote(v, safe='')}"
-                for k, v in sorted(self.qualifiers.items())
+                f"{k}={urllib.parse.quote(v, safe='')}" for k, v in sorted(self.qualifiers.items())
             )
             parts.append(f"?{qs}")
 

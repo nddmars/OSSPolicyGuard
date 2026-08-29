@@ -30,7 +30,17 @@ def parse_manifest_dependencies(manifest_path: str) -> list[str]:
 
 def run_scan(package_name: str, ecosystem: str) -> dict[str, Any]:
     result = subprocess.run(
-        [sys.executable, "-m", "osspolicyguard.cli", "scan", package_name, "--ecosystem", ecosystem, "--format", "json"],
+        [
+            sys.executable,
+            "-m",
+            "osspolicyguard.cli",
+            "scan",
+            package_name,
+            "--ecosystem",
+            ecosystem,
+            "--format",
+            "json",
+        ],
         capture_output=True,
         text=True,
         check=False,

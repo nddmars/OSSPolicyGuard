@@ -26,7 +26,32 @@ __all__ = [
     "ProviderResponse",
     "ProviderStatus",
     "NullProvider",
+    "GitHubProvider",
+    "ScorecardProvider",
+    "NVDProvider",
+    "OSVProvider",
+    "EPSSProvider",
+    "RegistryProvider",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily import concrete providers to avoid import cycles at module load."""
+    _lazy = {
+        "GitHubProvider": ".github_provider",
+        "ScorecardProvider": ".scorecard_provider",
+        "NVDProvider": ".nvd_provider",
+        "OSVProvider": ".osv_provider",
+        "EPSSProvider": ".epss_provider",
+        "RegistryProvider": ".registry_provider",
+    }
+    module_name = _lazy.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    module = importlib.import_module(module_name, __name__)
+    return getattr(module, name)
 
 
 # ---------------------------------------------------------------------------
@@ -159,9 +184,7 @@ class ProviderBase(ABC):
 
     def __init__(self, config: dict[str, Any]) -> None:
         self.config: dict[str, Any] = config
-        self._timeout: int = int(
-            config.get(self.name, {}).get("timeout", 10)
-        )
+        self._timeout: int = int(config.get(self.name, {}).get("timeout", 10))
 
     # ------------------------------------------------------------------
     # Abstract interface

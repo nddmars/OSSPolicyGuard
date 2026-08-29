@@ -3,6 +3,7 @@ Unit tests for oss_scorer.py
 
 Run with: pytest tests/test_oss_scorer.py -v
 """
+
 import os
 import sys
 import pytest
@@ -11,63 +12,70 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta, timezone
 
 # Ensure project root is on the path so we can import oss_scorer
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
 # ---------------------------------------------------------------------------
 
 _REGISTRY_CFG = {
-    'npm':       {'enabled': True, 'timeout': 5, 'languages': ['javascript', 'typescript', 'nodejs', 'node']},
-    'pypi':      {'enabled': True, 'timeout': 5, 'languages': ['python']},
-    'rubygems':  {'enabled': True, 'timeout': 5, 'languages': ['ruby']},
-    'crates':    {'enabled': True, 'timeout': 5, 'languages': ['rust']},
-    'nuget':     {'enabled': True, 'timeout': 5, 'languages': ['csharp', 'c#', 'dotnet']},
-    'packagist': {'enabled': True, 'timeout': 5, 'languages': ['php']},
-    'maven':     {'enabled': False, 'timeout': 5, 'languages': ['java', 'kotlin']},
+    "npm": {
+        "enabled": True,
+        "timeout": 5,
+        "languages": ["javascript", "typescript", "nodejs", "node"],
+    },
+    "pypi": {"enabled": True, "timeout": 5, "languages": ["python"]},
+    "rubygems": {"enabled": True, "timeout": 5, "languages": ["ruby"]},
+    "crates": {"enabled": True, "timeout": 5, "languages": ["rust"]},
+    "nuget": {"enabled": True, "timeout": 5, "languages": ["csharp", "c#", "dotnet"]},
+    "packagist": {"enabled": True, "timeout": 5, "languages": ["php"]},
+    "maven": {"enabled": False, "timeout": 5, "languages": ["java", "kotlin"]},
 }
 
 MINIMAL_CONFIG = {
-    'nvd': {'api_key': '', 'rate_limit': 100},  # high rate limit so tests don't sleep
-    'github': {'token': '', 'timeout': 5},
-    'scoring': {
-        'weights': {'activity': 30, 'trust': 20, 'security': 35, 'community': 15},
-        'thresholds': {'critical': 90, 'high': 80, 'medium': 70, 'low': 60},
-        'community': {
-            'weekly_high': 1_000_000,
-            'weekly_med': 100_000,
-            'weekly_low': 10_000,
-            'download_weight': 0.7,
-            'star_weight': 0.3,
+    "nvd": {"api_key": "", "rate_limit": 100},  # high rate limit so tests don't sleep
+    "github": {"token": "", "timeout": 5},
+    "scoring": {
+        "weights": {"activity": 30, "trust": 20, "security": 35, "community": 15},
+        "thresholds": {"critical": 90, "high": 80, "medium": 70, "low": 60},
+        "community": {
+            "weekly_high": 1_000_000,
+            "weekly_med": 100_000,
+            "weekly_low": 10_000,
+            "download_weight": 0.7,
+            "star_weight": 0.3,
         },
     },
-    'risk': {
-        'high_risk_countries': ['CN', 'RU'],
-        'critical_apps': ['payment', 'auth'],
-        'maintainer_risk_multipliers': {
-            'corporate': 1.0,
-            'verified_individual': 1.2,
-            'anonymous': 1.5,
+    "risk": {
+        "high_risk_countries": ["CN", "RU"],
+        "critical_apps": ["payment", "auth"],
+        "maintainer_risk_multipliers": {
+            "corporate": 1.0,
+            "verified_individual": 1.2,
+            "anonymous": 1.5,
         },
     },
-    'registries': _REGISTRY_CFG,
-    'geocoding': {
-        'enabled': True, 'max_contributors': 10,
-        'nominatim_url': 'https://nominatim.openstreetmap.org',
-        'user_agent': 'test/1.0',
+    "registries": _REGISTRY_CFG,
+    "geocoding": {
+        "enabled": True,
+        "max_contributors": 10,
+        "nominatim_url": "https://nominatim.openstreetmap.org",
+        "user_agent": "test/1.0",
     },
-    'osv': {
-        'enabled': True, 'timeout': 5,
-        'extra_advisory_deduction': 3,
-        'extra_advisory_max_penalty': 20,
+    "osv": {
+        "enabled": True,
+        "timeout": 5,
+        "extra_advisory_deduction": 3,
+        "extra_advisory_max_penalty": 20,
     },
-    'malicious_packages': {'enabled': True, 'auto_prohibit': True},
+    "malicious_packages": {"enabled": True, "auto_prohibit": True},
 }
 
 
 def _make_scorer(config=None):
     """Build an OSSScorer instance that bypasses config file loading."""
     from oss_scorer import OSSScorer, GitHubProvider, ScorecardProvider
+
     scorer = OSSScorer.__new__(OSSScorer)
     scorer.config = config or MINIMAL_CONFIG
     scorer._last_request_time = 0.0
@@ -81,6 +89,7 @@ def _make_scorer(config=None):
 def _make_workflow(config=None):
     """Build an OSSWorkflow instance with a pre-built scorer."""
     from oss_scorer import OSSWorkflow
+
     scorer = _make_scorer(config)
     workflow = OSSWorkflow.__new__(OSSWorkflow)
     workflow.scorer = scorer
@@ -92,6 +101,7 @@ def _make_workflow(config=None):
 def reset_singleton():
     """Reset OSSConfig singleton between tests."""
     from oss_scorer import OSSConfig
+
     OSSConfig._instance = None
     yield
     OSSConfig._instance = None
@@ -101,46 +111,51 @@ def reset_singleton():
 # OSSConfig tests
 # ---------------------------------------------------------------------------
 
+
 class TestOSSConfig:
     def test_defaults_applied_on_empty_yaml(self, tmp_path, monkeypatch):
         """OSSConfig should apply sensible defaults when config is minimal."""
-        cfg_file = tmp_path / 'config.yaml'
+        cfg_file = tmp_path / "config.yaml"
         cfg_file.write_text("scoring:\n  weights: {}\n")
         monkeypatch.chdir(tmp_path)
 
         from oss_scorer import OSSConfig
+
         config = OSSConfig()
-        assert config.config['nvd']['rate_limit'] == 5
-        assert config.config['github']['timeout'] == 10
-        assert config.config['scoring']['weights']['activity'] == 30
+        assert config.config["nvd"]["rate_limit"] == 5
+        assert config.config["github"]["timeout"] == 10
+        assert config.config["scoring"]["weights"]["activity"] == 30
 
     def test_env_var_overrides_github_token(self, tmp_path, monkeypatch):
         """GITHUB_TOKEN env var should override the value from config.yaml."""
-        cfg_file = tmp_path / 'config.yaml'
+        cfg_file = tmp_path / "config.yaml"
         cfg_file.write_text("github:\n  token: 'yaml-token'\n")
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv('GITHUB_TOKEN', 'env-token')
+        monkeypatch.setenv("GITHUB_TOKEN", "env-token")
 
         from oss_scorer import OSSConfig
+
         config = OSSConfig()
-        assert config.config['github']['token'] == 'env-token'
+        assert config.config["github"]["token"] == "env-token"
 
     def test_env_var_overrides_nvd_key(self, tmp_path, monkeypatch):
         """NVD_API_KEY env var should override the value from config.yaml."""
-        cfg_file = tmp_path / 'config.yaml'
+        cfg_file = tmp_path / "config.yaml"
         cfg_file.write_text("nvd:\n  api_key: 'yaml-key'\n")
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv('NVD_API_KEY', 'env-key')
+        monkeypatch.setenv("NVD_API_KEY", "env-key")
 
         from oss_scorer import OSSConfig
+
         config = OSSConfig()
-        assert config.config['nvd']['api_key'] == 'env-key'
+        assert config.config["nvd"]["api_key"] == "env-key"
 
     def test_missing_config_raises(self, tmp_path, monkeypatch):
         """Missing config.yaml should raise RuntimeError."""
         monkeypatch.chdir(tmp_path)
 
         from oss_scorer import OSSConfig
+
         with pytest.raises(RuntimeError, match="config loading failed"):
             OSSConfig()
 
@@ -148,6 +163,7 @@ class TestOSSConfig:
 # ---------------------------------------------------------------------------
 # OSSScorer._parse_github_owner_repo tests
 # ---------------------------------------------------------------------------
+
 
 class TestParseGitHubOwnerRepo:
     def test_standard_url(self):
@@ -187,42 +203,44 @@ class TestParseGitHubOwnerRepo:
 # OSSScorer._build_headers tests
 # ---------------------------------------------------------------------------
 
+
 class TestBuildHeaders:
     def test_github_headers_with_token(self):
-        cfg = {**MINIMAL_CONFIG, 'github': {'token': 'abc123', 'timeout': 5}}
+        cfg = {**MINIMAL_CONFIG, "github": {"token": "abc123", "timeout": 5}}
         scorer = _make_scorer(cfg)
-        headers = scorer._build_headers('github')
-        assert headers == {'Authorization': 'token abc123'}
+        headers = scorer._build_headers("github")
+        assert headers == {"Authorization": "token abc123"}
 
     def test_github_headers_without_token(self):
         scorer = _make_scorer()
-        assert scorer._build_headers('github') == {}
+        assert scorer._build_headers("github") == {}
 
     def test_nvd_headers_with_key(self):
-        cfg = {**MINIMAL_CONFIG, 'nvd': {'api_key': 'mykey', 'rate_limit': 100}}
+        cfg = {**MINIMAL_CONFIG, "nvd": {"api_key": "mykey", "rate_limit": 100}}
         scorer = _make_scorer(cfg)
-        headers = scorer._build_headers('nvd')
-        assert headers == {'apiKey': 'mykey'}
+        headers = scorer._build_headers("nvd")
+        assert headers == {"apiKey": "mykey"}
 
     def test_nvd_headers_without_key(self):
         scorer = _make_scorer()
-        assert scorer._build_headers('nvd') == {}
+        assert scorer._build_headers("nvd") == {}
 
 
 # ---------------------------------------------------------------------------
 # OSSScorer.get_github_metrics tests
 # ---------------------------------------------------------------------------
 
+
 class TestGetGitHubMetrics:
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_success_maps_fields(self, mock_get):
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            'stargazers_count': 5000,
-            'forks_count': 300,
-            'pushed_at': '2024-01-01T00:00:00Z',
-            'open_issues_count': 42,
-            'contributors_url': 'https://api.github.com/repos/x/y/contributors'
+            "stargazers_count": 5000,
+            "forks_count": 300,
+            "pushed_at": "2024-01-01T00:00:00Z",
+            "open_issues_count": 42,
+            "contributors_url": "https://api.github.com/repos/x/y/contributors",
         }
         mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
@@ -230,43 +248,44 @@ class TestGetGitHubMetrics:
         scorer = _make_scorer()
         result = scorer.get_github_metrics("https://github.com/expressjs/express")
 
-        assert result['status'] == 'success'
-        assert result['stars'] == 5000
-        assert result['forks'] == 300
-        assert result['open_issues'] == 42
-        assert 'fetched_at' in result
+        assert result["status"] == "success"
+        assert result["stars"] == 5000
+        assert result["forks"] == 300
+        assert result["open_issues"] == 42
+        assert "fetched_at" in result
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_network_error_returns_provider_error(self, mock_get):
         mock_get.side_effect = requests_exception()
 
         scorer = _make_scorer()
         result = scorer.get_github_metrics("https://github.com/owner/repo")
 
-        assert result['status'] == 'network_error'
-        assert result['error']['provider'] == 'github'
-        assert 'Network error' in result['error']['message']
+        assert result["status"] == "network_error"
+        assert result["error"]["provider"] == "github"
+        assert "Network error" in result["error"]["message"]
 
     def test_invalid_url_returns_provider_error(self):
         scorer = _make_scorer()
         result = scorer.get_github_metrics("not-a-url")
 
-        assert result['status'] == 'unknown'
-        assert result['error']['provider'] == 'github'
-        assert 'Not a GitHub URL' in result['error']['message']
+        assert result["status"] == "unknown"
+        assert result["error"]["provider"] == "github"
+        assert "Not a GitHub URL" in result["error"]["message"]
 
     def test_non_github_url_returns_provider_error(self):
         scorer = _make_scorer()
         result = scorer.get_github_metrics("https://gitlab.com/owner/repo")
 
-        assert result['status'] == 'unknown'
-        assert result['error']['provider'] == 'github'
-        assert 'Not a GitHub URL' in result['error']['message']
+        assert result["status"] == "unknown"
+        assert result["error"]["provider"] == "github"
+        assert "Not a GitHub URL" in result["error"]["message"]
 
 
 def requests_exception():
     """Helper: returns a requests.RequestException for mocking."""
     import requests as req
+
     return req.RequestException("connection error")
 
 
@@ -274,45 +293,47 @@ def requests_exception():
 # OSSScorer.check_cves tests  (NVD v2 format)
 # ---------------------------------------------------------------------------
 
+
 def _nvd_v2_response(*cves):
     """Build a minimal NVD v2 API response from (id, severity, base_score) tuples."""
     vulns = []
     for cve_id, severity, base_score in cves:
-        vulns.append({
-            'cve': {
-                'id': cve_id,
-                'metrics': {
-                    'cvssMetricV31': [{
-                        'cvssData': {
-                            'baseSeverity': severity,
-                            'baseScore': base_score,
-                        }
-                    }]
+        vulns.append(
+            {
+                "cve": {
+                    "id": cve_id,
+                    "metrics": {
+                        "cvssMetricV31": [
+                            {
+                                "cvssData": {
+                                    "baseSeverity": severity,
+                                    "baseScore": base_score,
+                                }
+                            }
+                        ]
+                    },
                 }
             }
-        })
-    return {'vulnerabilities': vulns}
+        )
+    return {"vulnerabilities": vulns}
 
 
 def _epss_response(*pairs):
     """Build a FIRST EPSS API response from (cve_id, epss_score) tuples."""
     return {
-        'data': [
-            {'cve': cve_id, 'epss': str(epss), 'percentile': '0.9'}
-            for cve_id, epss in pairs
-        ]
+        "data": [{"cve": cve_id, "epss": str(epss), "percentile": "0.9"} for cve_id, epss in pairs]
     }
 
 
 class TestCheckCves:
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_success_parses_nvd_v2_severity_bands(self, mock_get):
         # One NVD call (rate-limited) then one EPSS call — no dead probe any more.
         nvd_resp = MagicMock(status_code=200)
         nvd_resp.json.return_value = _nvd_v2_response(
-            ('CVE-2021-0001', 'CRITICAL', 9.8),
-            ('CVE-2021-0002', 'HIGH', 7.5),
-            ('CVE-2021-0003', 'MEDIUM', 5.0),
+            ("CVE-2021-0001", "CRITICAL", 9.8),
+            ("CVE-2021-0002", "HIGH", 7.5),
+            ("CVE-2021-0003", "MEDIUM", 5.0),
         )
         epss_resp = MagicMock(status_code=200)
         epss_resp.json.return_value = _epss_response()  # no EPSS data
@@ -322,19 +343,19 @@ class TestCheckCves:
         scorer = _make_scorer()
         result = scorer.check_cves("some-lib")
 
-        assert result['total'] == 3
-        assert result['critical'] == 1
-        assert result['high'] == 1
-        assert result['medium'] == 1
+        assert result["total"] == 3
+        assert result["critical"] == 1
+        assert result["high"] == 1
+        assert result["medium"] == 1
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_epss_scores_attached_to_cves(self, mock_get):
         nvd_resp = MagicMock(status_code=200)
         nvd_resp.json.return_value = _nvd_v2_response(
-            ('CVE-2021-44228', 'CRITICAL', 10.0),
+            ("CVE-2021-44228", "CRITICAL", 10.0),
         )
         epss_resp = MagicMock(status_code=200)
-        epss_resp.json.return_value = _epss_response(('CVE-2021-44228', 0.975))
+        epss_resp.json.return_value = _epss_response(("CVE-2021-44228", 0.975))
 
         # Single NVD call + single EPSS call (no dead probe).
         mock_get.side_effect = [nvd_resp, epss_resp]
@@ -342,63 +363,64 @@ class TestCheckCves:
         scorer = _make_scorer()
         result = scorer.check_cves("log4j")
 
-        assert result['max_epss'] == 0.975
-        assert result['epss_high'] == 1
-        assert result['cves'][0]['epss'] == 0.975
+        assert result["max_epss"] == 0.975
+        assert result["epss_high"] == 1
+        assert result["cves"][0]["epss"] == 0.975
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_network_error_returns_empty_structure(self, mock_get):
         mock_get.side_effect = requests_exception()
 
         scorer = _make_scorer()
         result = scorer.check_cves("some-package")
 
-        assert result['total'] == 0
-        assert result['cves'] == []
-        assert 'last_updated' in result
+        assert result["total"] == 0
+        assert result["cves"] == []
+        assert "last_updated" in result
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_non_200_returns_empty_structure(self, mock_get):
         bad_resp = MagicMock(status_code=403)
         mock_get.return_value = bad_resp
 
         scorer = _make_scorer()
         result = scorer.check_cves("some-package")
-        assert result['total'] == 0
+        assert result["total"] == 0
 
 
 # ---------------------------------------------------------------------------
 # OSSScorer.get_epss_scores tests
 # ---------------------------------------------------------------------------
 
+
 class TestGetEpssScores:
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_returns_epss_and_percentile(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = _epss_response(
-            ('CVE-2021-44228', 0.975),
-            ('CVE-2021-45046', 0.312),
+            ("CVE-2021-44228", 0.975),
+            ("CVE-2021-45046", 0.312),
         )
         scorer = _make_scorer()
-        result = scorer.get_epss_scores(['CVE-2021-44228', 'CVE-2021-45046'])
+        result = scorer.get_epss_scores(["CVE-2021-44228", "CVE-2021-45046"])
 
-        assert result['CVE-2021-44228']['epss'] == 0.975
-        assert result['CVE-2021-45046']['epss'] == 0.312
+        assert result["CVE-2021-44228"]["epss"] == 0.975
+        assert result["CVE-2021-45046"]["epss"] == 0.312
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_network_error_returns_empty(self, mock_get):
         mock_get.side_effect = requests_exception()
         scorer = _make_scorer()
-        assert scorer.get_epss_scores(['CVE-2021-44228']) == {}
+        assert scorer.get_epss_scores(["CVE-2021-44228"]) == {}
 
     def test_empty_list_returns_empty(self):
         scorer = _make_scorer()
         assert scorer.get_epss_scores([]) == {}
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_batches_over_30_cves(self, mock_get):
         mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = {'data': []}
+        mock_get.return_value.json.return_value = {"data": []}
 
         scorer = _make_scorer()
         cve_ids = [f"CVE-2024-{i:04d}" for i in range(35)]
@@ -411,52 +433,53 @@ class TestGetEpssScores:
 # OSSWorkflow._calculate_security_score tests  (EPSS-weighted)
 # ---------------------------------------------------------------------------
 
+
 class TestCalculateSecurityScore:
-    def _cve(self, severity='UNKNOWN', epss=0.0):
-        return {'severity': severity, 'epss': epss, 'base_score': 7.0, 'id': 'CVE-X'}
+    def _cve(self, severity="UNKNOWN", epss=0.0):
+        return {"severity": severity, "epss": epss, "base_score": 7.0, "id": "CVE-X"}
 
     def test_no_cve_data_returns_100(self):
         assert _make_workflow()._calculate_security_score({}) == 100.0
 
     def test_empty_cves_list_returns_100(self):
-        assert _make_workflow()._calculate_security_score({'cve_data': {'cves': []}}) == 100.0
+        assert _make_workflow()._calculate_security_score({"cve_data": {"cves": []}}) == 100.0
 
     def test_high_epss_deducts_15(self):
         # EPSS ≥ 0.5 → -15 pts
         result = _make_workflow()._calculate_security_score(
-            {'cve_data': {'cves': [self._cve(epss=0.75)]}}
+            {"cve_data": {"cves": [self._cve(epss=0.75)]}}
         )
         assert result == 85.0
 
     def test_medium_epss_deducts_8(self):
         # EPSS 0.1–0.5 → -8 pts
         result = _make_workflow()._calculate_security_score(
-            {'cve_data': {'cves': [self._cve(epss=0.25)]}}
+            {"cve_data": {"cves": [self._cve(epss=0.25)]}}
         )
         assert result == 92.0
 
     def test_low_epss_deducts_2(self):
         # EPSS > 0 but < 0.1 → -2 pts
         result = _make_workflow()._calculate_security_score(
-            {'cve_data': {'cves': [self._cve(epss=0.01)]}}
+            {"cve_data": {"cves": [self._cve(epss=0.01)]}}
         )
         assert result == 98.0
 
     def test_no_epss_critical_severity_deducts_10(self):
         result = _make_workflow()._calculate_security_score(
-            {'cve_data': {'cves': [self._cve(severity='CRITICAL', epss=0.0)]}}
+            {"cve_data": {"cves": [self._cve(severity="CRITICAL", epss=0.0)]}}
         )
         assert result == 90.0
 
     def test_no_epss_high_severity_deducts_5(self):
         result = _make_workflow()._calculate_security_score(
-            {'cve_data': {'cves': [self._cve(severity='HIGH', epss=0.0)]}}
+            {"cve_data": {"cves": [self._cve(severity="HIGH", epss=0.0)]}}
         )
         assert result == 95.0
 
     def test_no_epss_medium_severity_deducts_2(self):
         result = _make_workflow()._calculate_security_score(
-            {'cve_data': {'cves': [self._cve(severity='MEDIUM', epss=0.0)]}}
+            {"cve_data": {"cves": [self._cve(severity="MEDIUM", epss=0.0)]}}
         )
         assert result == 98.0
 
@@ -464,24 +487,26 @@ class TestCalculateSecurityScore:
         # 1 actively exploited (-15) + 2 CVSS HIGH no EPSS (-5 each) = -25 → 75
         cves = [
             self._cve(epss=0.9),
-            self._cve(severity='HIGH', epss=0.0),
-            self._cve(severity='HIGH', epss=0.0),
+            self._cve(severity="HIGH", epss=0.0),
+            self._cve(severity="HIGH", epss=0.0),
         ]
-        result = _make_workflow()._calculate_security_score({'cve_data': {'cves': cves}})
+        result = _make_workflow()._calculate_security_score({"cve_data": {"cves": cves}})
         assert result == 75.0
 
     def test_score_does_not_go_below_zero(self):
         cves = [self._cve(epss=0.9) for _ in range(20)]
-        result = _make_workflow()._calculate_security_score({'cve_data': {'cves': cves}})
+        result = _make_workflow()._calculate_security_score({"cve_data": {"cves": cves}})
         assert result == 0.0
 
     def test_scorecard_blended_at_40_percent(self):
         # CVE score = 85 (1 high-EPSS), Scorecard = 5.0 → 50 out of 100
         # expected = 0.6*85 + 0.4*50 = 51+20 = 71
-        result = _make_workflow()._calculate_security_score({
-            'cve_data': {'cves': [self._cve(epss=0.75)]},
-            'scorecard_data': {'score': 5.0, 'date': '', 'checks': {}},
-        })
+        result = _make_workflow()._calculate_security_score(
+            {
+                "cve_data": {"cves": [self._cve(epss=0.75)]},
+                "scorecard_data": {"score": 5.0, "date": "", "checks": {}},
+            }
+        )
         assert result == 71.0
 
 
@@ -489,10 +514,11 @@ class TestCalculateSecurityScore:
 # OSSWorkflow._calculate_activity_score tests
 # ---------------------------------------------------------------------------
 
+
 class TestCalculateActivityScore:
     def _results_with_commit(self, days_ago: int) -> dict:
-        dt = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime('%Y-%m-%dT%H:%M:%SZ')
-        return {'github_metrics': {'last_commit': dt}}
+        dt = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return {"github_metrics": {"last_commit": dt}}
 
     def test_recent_commit_scores_100(self):
         workflow = _make_workflow()
@@ -520,12 +546,13 @@ class TestCalculateActivityScore:
 
     def test_missing_last_commit_returns_40(self):
         workflow = _make_workflow()
-        assert workflow._calculate_activity_score({'github_metrics': {'last_commit': ''}}) == 40
+        assert workflow._calculate_activity_score({"github_metrics": {"last_commit": ""}}) == 40
 
 
 # ---------------------------------------------------------------------------
 # OSSWorkflow._calculate_trust_score tests
 # ---------------------------------------------------------------------------
+
 
 class TestCalculateTrustScore:
     # When geo_compliance is disabled (the default), trust equals maturity only;
@@ -534,22 +561,22 @@ class TestCalculateTrustScore:
     def test_high_forks_no_geo_data(self):
         # forks=10000 > 5000 → maturity=100 → trust=100
         workflow = _make_workflow()
-        assert workflow._calculate_trust_score({'github_metrics': {'forks': 10000}}) == 100.0
+        assert workflow._calculate_trust_score({"github_metrics": {"forks": 10000}}) == 100.0
 
     def test_medium_forks_no_geo_data(self):
         # forks=2000 > 1000 → maturity=80 → trust=80
         workflow = _make_workflow()
-        assert workflow._calculate_trust_score({'github_metrics': {'forks': 2000}}) == 80.0
+        assert workflow._calculate_trust_score({"github_metrics": {"forks": 2000}}) == 80.0
 
     def test_low_forks_no_geo_data(self):
         # forks=500 > 100 → maturity=60 → trust=60
         workflow = _make_workflow()
-        assert workflow._calculate_trust_score({'github_metrics': {'forks': 500}}) == 60.0
+        assert workflow._calculate_trust_score({"github_metrics": {"forks": 500}}) == 60.0
 
     def test_very_low_forks_no_geo_data(self):
         # forks=10, github_metrics present → maturity=40 → trust=40
         workflow = _make_workflow()
-        assert workflow._calculate_trust_score({'github_metrics': {'forks': 10}}) == 40.0
+        assert workflow._calculate_trust_score({"github_metrics": {"forks": 10}}) == 40.0
 
     def test_no_github_metrics_returns_50(self):
         # No github_metrics → maturity=50 (neutral) → trust=50
@@ -561,22 +588,23 @@ class TestCalculateTrustScore:
 # OSSWorkflow._calculate_community_score tests
 # ---------------------------------------------------------------------------
 
+
 class TestCalculateCommunityScore:
     def test_high_stars_scores_100(self):
         workflow = _make_workflow()
-        assert workflow._calculate_community_score({'github_metrics': {'stars': 50000}}) == 100
+        assert workflow._calculate_community_score({"github_metrics": {"stars": 50000}}) == 100
 
     def test_medium_stars_scores_80(self):
         workflow = _make_workflow()
-        assert workflow._calculate_community_score({'github_metrics': {'stars': 5000}}) == 80
+        assert workflow._calculate_community_score({"github_metrics": {"stars": 5000}}) == 80
 
     def test_low_stars_scores_60(self):
         workflow = _make_workflow()
-        assert workflow._calculate_community_score({'github_metrics': {'stars': 500}}) == 60
+        assert workflow._calculate_community_score({"github_metrics": {"stars": 500}}) == 60
 
     def test_very_low_stars_scores_40(self):
         workflow = _make_workflow()
-        assert workflow._calculate_community_score({'github_metrics': {'stars': 5}}) == 40
+        assert workflow._calculate_community_score({"github_metrics": {"stars": 5}}) == 40
 
     def test_no_github_metrics_returns_40(self):
         workflow = _make_workflow()
@@ -586,6 +614,7 @@ class TestCalculateCommunityScore:
 # ---------------------------------------------------------------------------
 # OSSWorkflow._determine_approval tests
 # ---------------------------------------------------------------------------
+
 
 class TestDetermineApproval:
     def test_mission_critical_approved(self):
@@ -640,6 +669,7 @@ class TestDetermineApproval:
 # OSSWorkflow._get_risk_level tests
 # ---------------------------------------------------------------------------
 
+
 class TestGetRiskLevel:
     def test_score_above_critical(self):
         assert _make_workflow()._get_risk_level(95) == "Low"
@@ -661,6 +691,7 @@ class TestGetRiskLevel:
 # OSSWorkflow.evaluate_component input validation tests
 # ---------------------------------------------------------------------------
 
+
 class TestEvaluateComponentValidation:
     def test_non_dict_raises_type_error(self):
         wf = _make_workflow()
@@ -670,56 +701,54 @@ class TestEvaluateComponentValidation:
     def test_invalid_criticality_raises_value_error(self):
         wf = _make_workflow()
         with pytest.raises(ValueError, match="Invalid criticality"):
-            wf.evaluate_component({'criticality': 'Unknown Level'})
+            wf.evaluate_component({"criticality": "Unknown Level"})
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_valid_non_critical_returns_result(self, mock_get):
         # NVD v2 empty response (two calls: rate-limiter probe + actual)
         # followed by EPSS empty response
         nvd_resp = MagicMock(status_code=200)
-        nvd_resp.json.return_value = {'vulnerabilities': []}
+        nvd_resp.json.return_value = {"vulnerabilities": []}
         epss_resp = MagicMock(status_code=200)
-        epss_resp.json.return_value = {'data': []}
+        epss_resp.json.return_value = {"data": []}
         mock_get.return_value = nvd_resp  # reuse for all calls
 
         wf = _make_workflow()
-        result = wf.evaluate_component({
-            'package_name': 'requests',
-            'criticality': 'Non-Critical'
-        })
-        assert 'total_score' in result
-        assert 'approval' in result
-        assert 'risk_level' in result
+        result = wf.evaluate_component({"package_name": "requests", "criticality": "Non-Critical"})
+        assert "total_score" in result
+        assert "approval" in result
+        assert "risk_level" in result
 
 
 # ---------------------------------------------------------------------------
 # OSSScorer.get_scorecard tests
 # ---------------------------------------------------------------------------
 
+
 class TestGetScorecard:
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_success_parses_score_and_checks(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = {
-            'score': 7.5,
-            'date': '2024-06-01',
-            'checks': [
-                {'name': 'Code-Review', 'score': 10},
-                {'name': 'Branch-Protection', 'score': 5},
-            ]
+            "score": 7.5,
+            "date": "2024-06-01",
+            "checks": [
+                {"name": "Code-Review", "score": 10},
+                {"name": "Branch-Protection", "score": 5},
+            ],
         }
 
         scorer = _make_scorer()
         result = scorer.get_scorecard("https://github.com/owner/repo")
 
-        assert result['status'] == 'success'
-        assert result['score'] == 7.5
-        assert result['date'] == '2024-06-01'
-        assert result['checks']['Code-Review'] == 10
-        assert result['checks']['Branch-Protection'] == 5
-        assert 'fetched_at' in result
+        assert result["status"] == "success"
+        assert result["score"] == 7.5
+        assert result["date"] == "2024-06-01"
+        assert result["checks"]["Code-Review"] == 10
+        assert result["checks"]["Branch-Protection"] == 5
+        assert "fetched_at" in result
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_404_returns_provider_error(self, mock_get):
         mock_response = MagicMock()
         mock_response.status_code = 404
@@ -729,32 +758,33 @@ class TestGetScorecard:
         scorer = _make_scorer()
         result = scorer.get_scorecard("https://github.com/owner/repo")
 
-        assert result['status'] == 'network_error'
-        assert result['error']['provider'] == 'scorecard'
-        assert 'HTTP error 404' in result['error']['message']
+        assert result["status"] == "network_error"
+        assert result["error"]["provider"] == "scorecard"
+        assert "HTTP error 404" in result["error"]["message"]
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_network_error_returns_provider_error(self, mock_get):
         mock_get.side_effect = requests_exception()
 
         scorer = _make_scorer()
         result = scorer.get_scorecard("https://github.com/owner/repo")
 
-        assert result['status'] == 'network_error'
-        assert result['error']['provider'] == 'scorecard'
+        assert result["status"] == "network_error"
+        assert result["error"]["provider"] == "scorecard"
 
     def test_invalid_url_returns_provider_error(self):
         scorer = _make_scorer()
         result = scorer.get_scorecard("not-a-url")
 
-        assert result['status'] == 'unknown'
-        assert result['error']['provider'] == 'scorecard'
-        assert 'Not a GitHub URL' in result['error']['message']
+        assert result["status"] == "unknown"
+        assert result["error"]["provider"] == "scorecard"
+        assert "Not a GitHub URL" in result["error"]["message"]
 
 
 # ---------------------------------------------------------------------------
 # Security score blending tests (with Scorecard)
 # ---------------------------------------------------------------------------
+
 
 class TestSecurityScoreBlending:
     def test_no_cves_no_scorecard_is_100(self):
@@ -765,29 +795,33 @@ class TestSecurityScoreBlending:
         wf = _make_workflow()
         # CVE score = 100, scorecard score = 5.0 (→50 out of 100)
         # expected = 0.6*100 + 0.4*50 = 60+20 = 80
-        result = wf._calculate_security_score({
-            'scorecard_data': {'score': 5.0, 'date': '', 'checks': {}}
-        })
+        result = wf._calculate_security_score(
+            {"scorecard_data": {"score": 5.0, "date": "", "checks": {}}}
+        )
         assert result == 80.0
 
     def test_perfect_scorecard_boosts_score(self):
         wf = _make_workflow()
         # 4 CRITICAL CVEs, no EPSS → -10 each → CVE score = 60
         # perfect scorecard (10 → 100) → 0.6*60 + 0.4*100 = 76
-        cves = [{'severity': 'CRITICAL', 'epss': 0.0, 'id': f'CVE-X-{i}', 'base_score': 9.8}
-                for i in range(4)]
-        result = wf._calculate_security_score({
-            'cve_data': {'cves': cves},
-            'scorecard_data': {'score': 10.0, 'date': '', 'checks': {}}
-        })
+        cves = [
+            {"severity": "CRITICAL", "epss": 0.0, "id": f"CVE-X-{i}", "base_score": 9.8}
+            for i in range(4)
+        ]
+        result = wf._calculate_security_score(
+            {
+                "cve_data": {"cves": cves},
+                "scorecard_data": {"score": 10.0, "date": "", "checks": {}},
+            }
+        )
         assert result == 76.0
 
     def test_zero_scorecard_penalises(self):
         wf = _make_workflow()
         # No CVEs → CVE score=100; scorecard=0 → 0.6*100 + 0.4*0 = 60
-        result = wf._calculate_security_score({
-            'scorecard_data': {'score': 0.0, 'date': '', 'checks': {}}
-        })
+        result = wf._calculate_security_score(
+            {"scorecard_data": {"score": 0.0, "date": "", "checks": {}}}
+        )
         assert result == 60.0
 
 
@@ -795,66 +829,82 @@ class TestSecurityScoreBlending:
 # OSSScorer._geocode_location tests
 # ---------------------------------------------------------------------------
 
+
 class TestGeocodeLocation:
     def test_empty_string_returns_empty(self):
         scorer = _make_scorer()
-        assert scorer._geocode_location('') == ''
+        assert scorer._geocode_location("") == ""
 
     def test_known_city_china(self):
         scorer = _make_scorer()
-        assert scorer._geocode_location('Shanghai, China') == 'CN'
+        assert scorer._geocode_location("Shanghai, China") == "CN"
 
     def test_known_city_russia(self):
         scorer = _make_scorer()
-        assert scorer._geocode_location('Moscow') == 'RU'
+        assert scorer._geocode_location("Moscow") == "RU"
 
     def test_known_city_us(self):
         scorer = _make_scorer()
-        assert scorer._geocode_location('San Francisco, CA') == 'US'
+        assert scorer._geocode_location("San Francisco, CA") == "US"
 
     def test_known_country_germany(self):
         scorer = _make_scorer()
-        assert scorer._geocode_location('Berlin, Germany') == 'DE'
+        assert scorer._geocode_location("Berlin, Germany") == "DE"
 
     def test_case_insensitive(self):
         scorer = _make_scorer()
-        assert scorer._geocode_location('BEIJING') == 'CN'
+        assert scorer._geocode_location("BEIJING") == "CN"
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_unknown_location_calls_nominatim(self, mock_get):
         mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = [
-            {'address': {'country_code': 'fr'}}
-        ]
-        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': True, 'nominatim_url': 'https://nominatim.openstreetmap.org', 'user_agent': 'test/1.0', 'max_contributors': 10}}
+        mock_get.return_value.json.return_value = [{"address": {"country_code": "fr"}}]
+        cfg = {
+            **MINIMAL_CONFIG,
+            "geocoding": {
+                "enabled": True,
+                "nominatim_url": "https://nominatim.openstreetmap.org",
+                "user_agent": "test/1.0",
+                "max_contributors": 10,
+            },
+        }
         scorer = _make_scorer(cfg)
         # "Bordeaux" is not in our fast-path map
-        result = scorer._geocode_location('Bordeaux')
-        assert result == 'FR'
+        result = scorer._geocode_location("Bordeaux")
+        assert result == "FR"
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_nominatim_network_error_returns_empty(self, mock_get):
         mock_get.side_effect = requests_exception()
-        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': True, 'nominatim_url': 'https://nominatim.openstreetmap.org', 'user_agent': 'test/1.0', 'max_contributors': 10}}
+        cfg = {
+            **MINIMAL_CONFIG,
+            "geocoding": {
+                "enabled": True,
+                "nominatim_url": "https://nominatim.openstreetmap.org",
+                "user_agent": "test/1.0",
+                "max_contributors": 10,
+            },
+        }
         scorer = _make_scorer(cfg)
-        result = scorer._geocode_location('Someplace Unknown')
-        assert result == ''
+        result = scorer._geocode_location("Someplace Unknown")
+        assert result == ""
 
     def test_geocoding_disabled_skips_nominatim(self):
-        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': False, 'max_contributors': 10}}
+        cfg = {**MINIMAL_CONFIG, "geocoding": {"enabled": False, "max_contributors": 10}}
         scorer = _make_scorer(cfg)
         # A location not in the fast-path map should return '' without any HTTP call
-        result = scorer._geocode_location('Bordeaux')
-        assert result == ''
+        result = scorer._geocode_location("Bordeaux")
+        assert result == ""
 
 
 # ---------------------------------------------------------------------------
 # OSSWorkflow._calculate_geo_risk_score tests
 # ---------------------------------------------------------------------------
 
+
 class TestCalculateGeoRiskScore:
     def _contrib(self, login, contributions, country_code):
-        return {'login': login, 'contributions': contributions, 'country_code': country_code}
+        return {"login": login, "contributions": contributions, "country_code": country_code}
 
     def test_empty_contributors_returns_neutral(self):
         wf = _make_workflow()
@@ -863,17 +913,27 @@ class TestCalculateGeoRiskScore:
     def test_geo_risk_is_neutral_by_default(self):
         wf = _make_workflow()
         contributors = [
-            self._contrib('user1', 200, 'CN'),
-            self._contrib('user2', 100, 'RU'),
+            self._contrib("user1", 200, "CN"),
+            self._contrib("user2", 100, "RU"),
         ]
         assert wf._calculate_geo_risk_score(contributors) == 50.0
 
     def test_geo_compliance_rule_is_explicit_and_opt_in(self):
-        cfg = {**MINIMAL_CONFIG, 'risk': {**MINIMAL_CONFIG['risk'], 'geo_compliance': {'enabled': True, 'high_risk_countries': ['CN', 'RU'], 'label': 'Organization compliance'}}}
+        cfg = {
+            **MINIMAL_CONFIG,
+            "risk": {
+                **MINIMAL_CONFIG["risk"],
+                "geo_compliance": {
+                    "enabled": True,
+                    "high_risk_countries": ["CN", "RU"],
+                    "label": "Organization compliance",
+                },
+            },
+        }
         wf = _make_workflow(cfg)
         contributors = [
-            self._contrib('user1', 200, 'CN'),
-            self._contrib('user2', 100, 'US'),
+            self._contrib("user1", 200, "CN"),
+            self._contrib("user2", 100, "US"),
         ]
         assert wf._calculate_geo_risk_score(contributors) == 33.3
 
@@ -881,6 +941,7 @@ class TestCalculateGeoRiskScore:
 # ---------------------------------------------------------------------------
 # Trust score blending tests (maturity + geo-risk)
 # ---------------------------------------------------------------------------
+
 
 class TestTrustScoreBlending:
     def test_no_data_returns_neutral(self):
@@ -891,17 +952,17 @@ class TestTrustScoreBlending:
     def test_high_forks_with_country_data_stays_neutral_by_default(self):
         wf = _make_workflow()
         results = {
-            'github_metrics': {'forks': 10000},
-            'contributor_locations': [
-                {'login': 'a', 'contributions': 100, 'country_code': 'CN'},
-            ]
+            "github_metrics": {"forks": 10000},
+            "contributor_locations": [
+                {"login": "a", "contributions": 100, "country_code": "CN"},
+            ],
         }
         # Geo disabled in MINIMAL_CONFIG → trust = maturity = 100 regardless of locations.
         assert wf._calculate_trust_score(results) == 100.0
 
     def test_no_contributors_uses_neutral_geo(self):
         wf = _make_workflow()
-        results = {'github_metrics': {'forks': 6000}}
+        results = {"github_metrics": {"forks": 6000}}
         # forks=6000 > 5000 → maturity=100; geo disabled → trust=100
         assert wf._calculate_trust_score(results) == 100.0
 
@@ -910,50 +971,59 @@ class TestTrustScoreBlending:
 # get_contributor_locations tests
 # ---------------------------------------------------------------------------
 
+
 class TestGetContributorLocations:
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_returns_geocoded_contributors(self, mock_get):
         contributors_resp = MagicMock()
         contributors_resp.status_code = 200
         contributors_resp.raise_for_status = MagicMock()
         contributors_resp.json.return_value = [
-            {'login': 'alice', 'contributions': 100},
-            {'login': 'bob', 'contributions': 50},
+            {"login": "alice", "contributions": 100},
+            {"login": "bob", "contributions": 50},
         ]
 
         alice_resp = MagicMock()
         alice_resp.status_code = 200
         alice_resp.raise_for_status = MagicMock()
-        alice_resp.json.return_value = {'location': 'San Francisco, CA', 'company': 'Acme'}
+        alice_resp.json.return_value = {"location": "San Francisco, CA", "company": "Acme"}
 
         bob_resp = MagicMock()
         bob_resp.status_code = 200
         bob_resp.raise_for_status = MagicMock()
-        bob_resp.json.return_value = {'location': 'Beijing, China', 'company': ''}
+        bob_resp.json.return_value = {"location": "Beijing, China", "company": ""}
 
         mock_get.side_effect = [contributors_resp, alice_resp, bob_resp]
 
-        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': True, 'max_contributors': 10, 'nominatim_url': 'https://nominatim.openstreetmap.org', 'user_agent': 'test/1.0'}}
+        cfg = {
+            **MINIMAL_CONFIG,
+            "geocoding": {
+                "enabled": True,
+                "max_contributors": 10,
+                "nominatim_url": "https://nominatim.openstreetmap.org",
+                "user_agent": "test/1.0",
+            },
+        }
         scorer = _make_scorer(cfg)
-        results = scorer.get_contributor_locations('https://api.github.com/repos/x/y/contributors')
+        results = scorer.get_contributor_locations("https://api.github.com/repos/x/y/contributors")
 
         assert len(results) == 2
-        assert results[0]['login'] == 'alice'
-        assert results[0]['country_code'] == 'US'
-        assert results[1]['login'] == 'bob'
-        assert results[1]['country_code'] == 'CN'
+        assert results[0]["login"] == "alice"
+        assert results[0]["country_code"] == "US"
+        assert results[1]["login"] == "bob"
+        assert results[1]["country_code"] == "CN"
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_network_error_returns_empty_list(self, mock_get):
         mock_get.side_effect = requests_exception()
         scorer = _make_scorer()
-        result = scorer.get_contributor_locations('https://api.github.com/repos/x/y/contributors')
+        result = scorer.get_contributor_locations("https://api.github.com/repos/x/y/contributors")
         assert result == []
 
     def test_geocoding_disabled_returns_empty_list(self):
-        cfg = {**MINIMAL_CONFIG, 'geocoding': {'enabled': False, 'max_contributors': 10}}
+        cfg = {**MINIMAL_CONFIG, "geocoding": {"enabled": False, "max_contributors": 10}}
         scorer = _make_scorer(cfg)
-        result = scorer.get_contributor_locations('https://api.github.com/repos/x/y/contributors')
+        result = scorer.get_contributor_locations("https://api.github.com/repos/x/y/contributors")
         assert result == []
 
 
@@ -961,162 +1031,159 @@ class TestGetContributorLocations:
 # OSSScorer._resolve_registry tests
 # ---------------------------------------------------------------------------
 
+
 class TestResolveRegistry:
     def test_direct_registry_name_npm(self):
-        assert _make_scorer()._resolve_registry('npm') == 'npm'
+        assert _make_scorer()._resolve_registry("npm") == "npm"
 
     def test_direct_registry_name_pypi(self):
-        assert _make_scorer()._resolve_registry('pypi') == 'pypi'
+        assert _make_scorer()._resolve_registry("pypi") == "pypi"
 
     def test_language_alias_python_resolves_pypi(self):
-        assert _make_scorer()._resolve_registry('python') == 'pypi'
+        assert _make_scorer()._resolve_registry("python") == "pypi"
 
     def test_language_alias_javascript_resolves_npm(self):
-        assert _make_scorer()._resolve_registry('javascript') == 'npm'
+        assert _make_scorer()._resolve_registry("javascript") == "npm"
 
     def test_language_alias_typescript_resolves_npm(self):
-        assert _make_scorer()._resolve_registry('typescript') == 'npm'
+        assert _make_scorer()._resolve_registry("typescript") == "npm"
 
     def test_language_alias_rust_resolves_crates(self):
-        assert _make_scorer()._resolve_registry('rust') == 'crates'
+        assert _make_scorer()._resolve_registry("rust") == "crates"
 
     def test_language_alias_csharp_resolves_nuget(self):
-        assert _make_scorer()._resolve_registry('csharp') == 'nuget'
+        assert _make_scorer()._resolve_registry("csharp") == "nuget"
 
     def test_language_alias_php_resolves_packagist(self):
-        assert _make_scorer()._resolve_registry('php') == 'packagist'
+        assert _make_scorer()._resolve_registry("php") == "packagist"
 
     def test_case_insensitive(self):
-        assert _make_scorer()._resolve_registry('PYTHON') == 'pypi'
-        assert _make_scorer()._resolve_registry('JavaScript') == 'npm'
+        assert _make_scorer()._resolve_registry("PYTHON") == "pypi"
+        assert _make_scorer()._resolve_registry("JavaScript") == "npm"
 
     def test_unknown_ecosystem_returns_none(self):
-        assert _make_scorer()._resolve_registry('cobol') is None
+        assert _make_scorer()._resolve_registry("cobol") is None
 
     def test_disabled_registry_returns_none(self):
         # maven is disabled in MINIMAL_CONFIG
-        assert _make_scorer()._resolve_registry('java') is None
-        assert _make_scorer()._resolve_registry('maven') is None
+        assert _make_scorer()._resolve_registry("java") is None
+        assert _make_scorer()._resolve_registry("maven") is None
 
 
 # ---------------------------------------------------------------------------
 # OSSScorer.get_download_count — per-registry fetcher tests
 # ---------------------------------------------------------------------------
 
+
 class TestGetDownloadCount:
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_npm_extracts_downloads(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.raise_for_status = MagicMock()
-        mock_get.return_value.json.return_value = {'downloads': 5_000_000}
+        mock_get.return_value.json.return_value = {"downloads": 5_000_000}
 
-        result = _make_scorer().get_download_count('lodash', 'npm')
+        result = _make_scorer().get_download_count("lodash", "npm")
 
-        assert result['weekly_downloads'] == 5_000_000
-        assert result['period'] == 'weekly'
-        assert result['registry'] == 'npm'
+        assert result["weekly_downloads"] == 5_000_000
+        assert result["period"] == "weekly"
+        assert result["registry"] == "npm"
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_pypi_extracts_last_week(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.raise_for_status = MagicMock()
         mock_get.return_value.json.return_value = {
-            'data': {'last_week': 12_000_000, 'last_month': 48_000_000}
+            "data": {"last_week": 12_000_000, "last_month": 48_000_000}
         }
 
-        result = _make_scorer().get_download_count('requests', 'python')
+        result = _make_scorer().get_download_count("requests", "python")
 
-        assert result['weekly_downloads'] == 12_000_000
-        assert result['registry'] == 'pypi'
+        assert result["weekly_downloads"] == 12_000_000
+        assert result["registry"] == "pypi"
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_rubygems_estimates_weekly(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.raise_for_status = MagicMock()
-        mock_get.return_value.json.return_value = {'version_downloads': 520_000}
+        mock_get.return_value.json.return_value = {"version_downloads": 520_000}
 
-        result = _make_scorer().get_download_count('rails', 'ruby')
+        result = _make_scorer().get_download_count("rails", "ruby")
 
         # 520_000 // 52 = 10_000
-        assert result['weekly_downloads'] == 10_000
-        assert result['period'] == 'estimated_weekly'
-        assert result['registry'] == 'rubygems'
+        assert result["weekly_downloads"] == 10_000
+        assert result["period"] == "estimated_weekly"
+        assert result["registry"] == "rubygems"
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_crates_divides_90day_by_13(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.raise_for_status = MagicMock()
-        mock_get.return_value.json.return_value = {
-            'crate': {'recent_downloads': 130_000}
-        }
+        mock_get.return_value.json.return_value = {"crate": {"recent_downloads": 130_000}}
 
-        result = _make_scorer().get_download_count('serde', 'rust')
+        result = _make_scorer().get_download_count("serde", "rust")
 
-        assert result['weekly_downloads'] == 10_000  # 130_000 // 13
-        assert result['registry'] == 'crates'
+        assert result["weekly_downloads"] == 10_000  # 130_000 // 13
+        assert result["registry"] == "crates"
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_nuget_divides_total_by_104(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.raise_for_status = MagicMock()
-        mock_get.return_value.json.return_value = {
-            'data': [{'totalDownloads': 10_400_000}]
-        }
+        mock_get.return_value.json.return_value = {"data": [{"totalDownloads": 10_400_000}]}
 
-        result = _make_scorer().get_download_count('Newtonsoft.Json', 'csharp')
+        result = _make_scorer().get_download_count("Newtonsoft.Json", "csharp")
 
-        assert result['weekly_downloads'] == 100_000  # 10_400_000 // 104
-        assert result['registry'] == 'nuget'
+        assert result["weekly_downloads"] == 100_000  # 10_400_000 // 104
+        assert result["registry"] == "nuget"
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_packagist_divides_monthly_by_4(self, mock_get):
         mock_get.return_value.status_code = 200
         mock_get.return_value.raise_for_status = MagicMock()
-        mock_get.return_value.json.return_value = {
-            'package': {'downloads': {'monthly': 400_000}}
-        }
+        mock_get.return_value.json.return_value = {"package": {"downloads": {"monthly": 400_000}}}
 
-        result = _make_scorer().get_download_count('laravel/framework', 'php')
+        result = _make_scorer().get_download_count("laravel/framework", "php")
 
-        assert result['weekly_downloads'] == 100_000  # 400_000 // 4
-        assert result['registry'] == 'packagist'
+        assert result["weekly_downloads"] == 100_000  # 400_000 // 4
+        assert result["registry"] == "packagist"
 
     def test_packagist_without_vendor_slash_returns_zero(self):
-        result = _make_scorer().get_download_count('laravel', 'php')
-        assert result['weekly_downloads'] == 0
+        result = _make_scorer().get_download_count("laravel", "php")
+        assert result["weekly_downloads"] == 0
 
     def test_unknown_ecosystem_returns_error_dict(self):
-        result = _make_scorer().get_download_count('mylib', 'cobol')
+        result = _make_scorer().get_download_count("mylib", "cobol")
         assert isinstance(result, dict)
-        assert result['status'] == 'error'
-        assert result['weekly_downloads'] is None
+        assert result["status"] == "error"
+        assert result["weekly_downloads"] is None
 
     def test_disabled_registry_returns_error_dict(self):
-        result = _make_scorer().get_download_count('mylib', 'java')
+        result = _make_scorer().get_download_count("mylib", "java")
         assert isinstance(result, dict)
-        assert result['status'] == 'error'
-        assert result['weekly_downloads'] is None
+        assert result["status"] == "error"
+        assert result["weekly_downloads"] is None
 
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.get")
     def test_network_error_returns_error_dict(self, mock_get):
         mock_get.side_effect = requests_exception()
-        result = _make_scorer().get_download_count('requests', 'python')
+        result = _make_scorer().get_download_count("requests", "python")
         assert isinstance(result, dict)
-        assert result['status'] == 'error'
-        assert result['weekly_downloads'] is None
+        assert result["status"] == "error"
+        assert result["weekly_downloads"] is None
 
 
 # ---------------------------------------------------------------------------
 # OSSWorkflow._calculate_community_score — with download data
 # ---------------------------------------------------------------------------
 
+
 class TestCalculateCommunityScoreWithDownloads:
     def _results(self, weekly=None, stars=None):
         r = {}
         if weekly is not None:
-            r['download_data'] = {'weekly_downloads': weekly, 'period': 'weekly', 'registry': 'npm'}
+            r["download_data"] = {"weekly_downloads": weekly, "period": "weekly", "registry": "npm"}
         if stars is not None:
-            r['github_metrics'] = {'stars': stars}
+            r["github_metrics"] = {"stars": stars}
         return r
 
     def test_high_downloads_and_high_stars_scores_100(self):
@@ -1157,225 +1224,244 @@ class TestCalculateCommunityScoreWithDownloads:
 # OSSScorer._resolve_osv_ecosystem tests
 # ---------------------------------------------------------------------------
 
+
 class TestResolveOsvEcosystem:
     def test_direct_npm_maps_to_npm(self):
-        assert _make_scorer()._resolve_osv_ecosystem('npm') == 'npm'
+        assert _make_scorer()._resolve_osv_ecosystem("npm") == "npm"
 
     def test_direct_pypi_maps_to_pypi(self):
-        assert _make_scorer()._resolve_osv_ecosystem('pypi') == 'PyPI'
+        assert _make_scorer()._resolve_osv_ecosystem("pypi") == "PyPI"
 
     def test_language_python_maps_to_pypi(self):
-        assert _make_scorer()._resolve_osv_ecosystem('python') == 'PyPI'
+        assert _make_scorer()._resolve_osv_ecosystem("python") == "PyPI"
 
     def test_language_javascript_maps_to_npm(self):
-        assert _make_scorer()._resolve_osv_ecosystem('javascript') == 'npm'
+        assert _make_scorer()._resolve_osv_ecosystem("javascript") == "npm"
 
     def test_language_rust_maps_to_crates_io(self):
-        assert _make_scorer()._resolve_osv_ecosystem('rust') == 'crates.io'
+        assert _make_scorer()._resolve_osv_ecosystem("rust") == "crates.io"
 
     def test_language_java_maps_to_maven_even_when_registry_disabled(self):
         # maven is disabled for download counting but OSV security check should still work
-        assert _make_scorer()._resolve_osv_ecosystem('java') == 'Maven'
+        assert _make_scorer()._resolve_osv_ecosystem("java") == "Maven"
 
     def test_language_ruby_maps_to_rubygems(self):
-        assert _make_scorer()._resolve_osv_ecosystem('ruby') == 'RubyGems'
+        assert _make_scorer()._resolve_osv_ecosystem("ruby") == "RubyGems"
 
     def test_unknown_ecosystem_returns_none(self):
-        assert _make_scorer()._resolve_osv_ecosystem('cobol') is None
+        assert _make_scorer()._resolve_osv_ecosystem("cobol") is None
 
     def test_case_insensitive(self):
-        assert _make_scorer()._resolve_osv_ecosystem('PYTHON') == 'PyPI'
-        assert _make_scorer()._resolve_osv_ecosystem('NPM') == 'npm'
+        assert _make_scorer()._resolve_osv_ecosystem("PYTHON") == "PyPI"
+        assert _make_scorer()._resolve_osv_ecosystem("NPM") == "npm"
 
 
 # ---------------------------------------------------------------------------
 # OSSScorer.check_osv tests
 # ---------------------------------------------------------------------------
 
+
 def _osv_response(*advisories):
     """Build a minimal OSV API response from (id, summary, aliases) tuples."""
     return {
-        'vulns': [
-            {'id': vid, 'summary': summary, 'aliases': aliases}
+        "vulns": [
+            {"id": vid, "summary": summary, "aliases": aliases}
             for vid, summary, aliases in advisories
         ]
     }
 
 
 class TestCheckOsv:
-    @patch('oss_scorer.requests.post')
+    @patch("oss_scorer.requests.post")
     def test_clean_package_returns_empty(self, mock_post):
         mock_post.return_value.status_code = 200
-        mock_post.return_value.json.return_value = {'vulns': []}
+        mock_post.return_value.json.return_value = {"vulns": []}
 
-        result = _make_scorer().check_osv('lodash', 'npm')
+        result = _make_scorer().check_osv("lodash", "npm")
 
-        assert result['is_malicious'] is False
-        assert result['total'] == 0
-        assert result['extra_advisories'] == 0
+        assert result["is_malicious"] is False
+        assert result["total"] == 0
+        assert result["extra_advisories"] == 0
 
-    @patch('oss_scorer.requests.post')
+    @patch("oss_scorer.requests.post")
     def test_malicious_package_flagged(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = _osv_response(
-            ('MAL-2023-1234', 'Malicious code in package', []),
+            ("MAL-2023-1234", "Malicious code in package", []),
         )
 
-        result = _make_scorer().check_osv('typosquatter', 'npm')
+        result = _make_scorer().check_osv("typosquatter", "npm")
 
-        assert result['is_malicious'] is True
-        assert result['malicious_count'] == 1
-        assert 'MAL-2023-1234' in result['malicious_ids']
+        assert result["is_malicious"] is True
+        assert result["malicious_count"] == 1
+        assert "MAL-2023-1234" in result["malicious_ids"]
 
-    @patch('oss_scorer.requests.post')
+    @patch("oss_scorer.requests.post")
     def test_ghsa_advisory_counted_as_extra(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = _osv_response(
-            ('GHSA-xxxx-yyyy-zzzz', 'Prototype pollution', []),
+            ("GHSA-xxxx-yyyy-zzzz", "Prototype pollution", []),
         )
 
-        result = _make_scorer().check_osv('some-package', 'npm')
+        result = _make_scorer().check_osv("some-package", "npm")
 
-        assert result['extra_advisories'] == 1
-        assert result['is_malicious'] is False
+        assert result["extra_advisories"] == 1
+        assert result["is_malicious"] is False
 
-    @patch('oss_scorer.requests.post')
+    @patch("oss_scorer.requests.post")
     def test_cve_advisory_not_counted_as_extra(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = _osv_response(
-            ('CVE-2021-44228', 'Log4Shell', []),
+            ("CVE-2021-44228", "Log4Shell", []),
         )
 
-        result = _make_scorer().check_osv('log4j', 'java')
+        result = _make_scorer().check_osv("log4j", "java")
 
         # Already captured by NVD pipeline — not extra
-        assert result['extra_advisories'] == 0
+        assert result["extra_advisories"] == 0
 
-    @patch('oss_scorer.requests.post')
+    @patch("oss_scorer.requests.post")
     def test_ghsa_with_cve_alias_not_counted_as_extra(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = _osv_response(
-            ('GHSA-xxxx-yyyy-zzzz', 'Vuln', ['CVE-2021-44228']),
+            ("GHSA-xxxx-yyyy-zzzz", "Vuln", ["CVE-2021-44228"]),
         )
 
-        result = _make_scorer().check_osv('some-package', 'npm')
+        result = _make_scorer().check_osv("some-package", "npm")
 
         # Has CVE alias → already in NVD pipeline, not counted as extra
-        assert result['extra_advisories'] == 0
+        assert result["extra_advisories"] == 0
 
-    @patch('oss_scorer.requests.post')
+    @patch("oss_scorer.requests.post")
     def test_mixed_advisories(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = _osv_response(
-            ('MAL-2023-9999', 'Malicious', []),
-            ('GHSA-aaaa-bbbb-cccc', 'Extra vuln', []),
-            ('CVE-2021-0001', 'Known CVE', []),
+            ("MAL-2023-9999", "Malicious", []),
+            ("GHSA-aaaa-bbbb-cccc", "Extra vuln", []),
+            ("CVE-2021-0001", "Known CVE", []),
         )
 
-        result = _make_scorer().check_osv('bad-package', 'npm')
+        result = _make_scorer().check_osv("bad-package", "npm")
 
-        assert result['is_malicious'] is True
-        assert result['malicious_count'] == 1
-        assert result['extra_advisories'] == 1
-        assert result['total'] == 3
+        assert result["is_malicious"] is True
+        assert result["malicious_count"] == 1
+        assert result["extra_advisories"] == 1
+        assert result["total"] == 3
 
     def test_osv_disabled_returns_empty(self):
-        cfg = {**MINIMAL_CONFIG, 'osv': {'enabled': False, 'timeout': 5,
-                                          'extra_advisory_deduction': 3,
-                                          'extra_advisory_max_penalty': 20}}
-        result = _make_scorer(cfg).check_osv('lodash', 'npm')
-        assert result['total'] == 0
-        assert result['is_malicious'] is False
+        cfg = {
+            **MINIMAL_CONFIG,
+            "osv": {
+                "enabled": False,
+                "timeout": 5,
+                "extra_advisory_deduction": 3,
+                "extra_advisory_max_penalty": 20,
+            },
+        }
+        result = _make_scorer(cfg).check_osv("lodash", "npm")
+        assert result["total"] == 0
+        assert result["is_malicious"] is False
 
     def test_unknown_ecosystem_returns_empty(self):
-        result = _make_scorer().check_osv('mylib', 'cobol')
-        assert result['total'] == 0
+        result = _make_scorer().check_osv("mylib", "cobol")
+        assert result["total"] == 0
 
-    @patch('oss_scorer.requests.post')
+    @patch("oss_scorer.requests.post")
     def test_non_200_returns_empty(self, mock_post):
         mock_post.return_value.status_code = 429
-        result = _make_scorer().check_osv('lodash', 'npm')
-        assert result['total'] == 0
+        result = _make_scorer().check_osv("lodash", "npm")
+        assert result["total"] == 0
 
-    @patch('oss_scorer.requests.post')
+    @patch("oss_scorer.requests.post")
     def test_network_error_returns_empty(self, mock_post):
         mock_post.side_effect = requests_exception()
-        result = _make_scorer().check_osv('lodash', 'npm')
-        assert result['total'] == 0
+        result = _make_scorer().check_osv("lodash", "npm")
+        assert result["total"] == 0
 
-    @patch('oss_scorer.requests.post')
+    @patch("oss_scorer.requests.post")
     def test_malicious_packages_disabled_does_not_flag(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = _osv_response(
-            ('MAL-2023-1234', 'Malicious', []),
+            ("MAL-2023-1234", "Malicious", []),
         )
-        cfg = {**MINIMAL_CONFIG, 'malicious_packages': {'enabled': False, 'auto_prohibit': True}}
-        result = _make_scorer(cfg).check_osv('package', 'npm')
+        cfg = {**MINIMAL_CONFIG, "malicious_packages": {"enabled": False, "auto_prohibit": True}}
+        result = _make_scorer(cfg).check_osv("package", "npm")
         # MAL- advisory present but malicious_packages disabled → not flagged
-        assert result['is_malicious'] is False
-        assert result['malicious_count'] == 0
+        assert result["is_malicious"] is False
+        assert result["malicious_count"] == 0
         # MAL- should NOT be counted as extra_advisories either
-        assert result['extra_advisories'] == 0
+        assert result["extra_advisories"] == 0
 
 
 # ---------------------------------------------------------------------------
 # OSV effect on _calculate_security_score
 # ---------------------------------------------------------------------------
 
+
 class TestOsvSecurityScoreEffect:
     def test_malicious_package_forces_score_to_zero(self):
         wf = _make_workflow()
-        result = wf._calculate_security_score({
-            'osv_data': {
-                'is_malicious': True, 'malicious_count': 1,
-                'malicious_ids': ['MAL-2023-1234'], 'extra_advisories': 0,
+        result = wf._calculate_security_score(
+            {
+                "osv_data": {
+                    "is_malicious": True,
+                    "malicious_count": 1,
+                    "malicious_ids": ["MAL-2023-1234"],
+                    "extra_advisories": 0,
+                }
             }
-        })
+        )
         assert result == 0.0
 
     def test_extra_osv_advisories_reduce_score(self):
         wf = _make_workflow()
         # 2 GHSA advisories × 3 pts each = 6 pts deducted
-        result = wf._calculate_security_score({
-            'osv_data': {'is_malicious': False, 'extra_advisories': 2, 'malicious_count': 0}
-        })
+        result = wf._calculate_security_score(
+            {"osv_data": {"is_malicious": False, "extra_advisories": 2, "malicious_count": 0}}
+        )
         assert result == 94.0
 
     def test_extra_osv_penalty_capped_at_max(self):
         wf = _make_workflow()
         # 10 extra × 3 pts = 30, but max_penalty=20 → capped at 20
-        result = wf._calculate_security_score({
-            'osv_data': {'is_malicious': False, 'extra_advisories': 10, 'malicious_count': 0}
-        })
+        result = wf._calculate_security_score(
+            {"osv_data": {"is_malicious": False, "extra_advisories": 10, "malicious_count": 0}}
+        )
         assert result == 80.0
 
     def test_auto_prohibit_false_does_not_force_zero(self):
-        cfg = {**MINIMAL_CONFIG, 'malicious_packages': {'enabled': True, 'auto_prohibit': False}}
+        cfg = {**MINIMAL_CONFIG, "malicious_packages": {"enabled": True, "auto_prohibit": False}}
         wf = _make_workflow(cfg)
-        result = wf._calculate_security_score({
-            'osv_data': {
-                'is_malicious': True, 'malicious_count': 1,
-                'malicious_ids': ['MAL-2023-1234'], 'extra_advisories': 0,
+        result = wf._calculate_security_score(
+            {
+                "osv_data": {
+                    "is_malicious": True,
+                    "malicious_count": 1,
+                    "malicious_ids": ["MAL-2023-1234"],
+                    "extra_advisories": 0,
+                }
             }
-        })
+        )
         # auto_prohibit=False → not forced to 0, scored normally (no CVEs → 100)
         assert result == 100.0
 
     def test_extra_advisories_plus_cves_accumulate(self):
         wf = _make_workflow()
         # 1 HIGH CVE (no EPSS) → -5; 2 GHSA extra → -6; total = -11 → 89
-        result = wf._calculate_security_score({
-            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.0, 'id': 'CVE-X'}]},
-            'osv_data': {'is_malicious': False, 'extra_advisories': 2, 'malicious_count': 0},
-        })
+        result = wf._calculate_security_score(
+            {
+                "cve_data": {"cves": [{"severity": "HIGH", "epss": 0.0, "id": "CVE-X"}]},
+                "osv_data": {"is_malicious": False, "extra_advisories": 2, "malicious_count": 0},
+            }
+        )
         assert result == 89.0
 
     def test_no_osv_data_unchanged(self):
         wf = _make_workflow()
         # Absence of osv_data should not affect existing scoring
-        result = wf._calculate_security_score({
-            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.0, 'id': 'CVE-X'}]}
-        })
+        result = wf._calculate_security_score(
+            {"cve_data": {"cves": [{"severity": "HIGH", "epss": 0.0, "id": "CVE-X"}]}}
+        )
         assert result == 95.0
 
 
@@ -1383,90 +1469,97 @@ class TestOsvSecurityScoreEffect:
 # Malicious package override in evaluate_component
 # ---------------------------------------------------------------------------
 
+
 class TestEvaluateMaliciousComponent:
-    @patch('oss_scorer.requests.post')
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.post")
+    @patch("oss_scorer.requests.get")
     def test_malicious_package_forced_prohibited(self, mock_get, mock_post):
         nvd_resp = MagicMock(status_code=200)
-        nvd_resp.json.return_value = {'vulnerabilities': []}
+        nvd_resp.json.return_value = {"vulnerabilities": []}
         epss_resp = MagicMock(status_code=200)
-        epss_resp.json.return_value = {'data': []}
+        epss_resp.json.return_value = {"data": []}
         mock_get.return_value = nvd_resp
 
         osv_resp = MagicMock(status_code=200)
         osv_resp.json.return_value = _osv_response(
-            ('MAL-2023-9999', 'Backdoor in release', []),
+            ("MAL-2023-9999", "Backdoor in release", []),
         )
         mock_post.return_value = osv_resp
 
         wf = _make_workflow()
-        result = wf.evaluate_component({
-            'package_name': 'evil-pkg',
-            'ecosystem': 'npm',
-            'criticality': 'Non-Critical',
-        })
+        result = wf.evaluate_component(
+            {
+                "package_name": "evil-pkg",
+                "ecosystem": "npm",
+                "criticality": "Non-Critical",
+            }
+        )
 
-        assert result.get('is_malicious') is True
-        assert result['approval'] == 'PROHIBITED'
-        assert result['risk_level'] == 'High'
+        assert result.get("is_malicious") is True
+        assert result["approval"] == "PROHIBITED"
+        assert result["risk_level"] == "High"
 
-    @patch('oss_scorer.requests.post')
-    @patch('oss_scorer.requests.get')
+    @patch("oss_scorer.requests.post")
+    @patch("oss_scorer.requests.get")
     def test_clean_package_not_flagged(self, mock_get, mock_post):
         nvd_resp = MagicMock(status_code=200)
-        nvd_resp.json.return_value = {'vulnerabilities': []}
+        nvd_resp.json.return_value = {"vulnerabilities": []}
         mock_get.return_value = nvd_resp
 
         osv_resp = MagicMock(status_code=200)
-        osv_resp.json.return_value = {'vulns': []}
+        osv_resp.json.return_value = {"vulns": []}
         mock_post.return_value = osv_resp
 
         wf = _make_workflow()
-        result = wf.evaluate_component({
-            'package_name': 'safe-pkg',
-            'ecosystem': 'npm',
-            'criticality': 'Non-Critical',
-        })
+        result = wf.evaluate_component(
+            {
+                "package_name": "safe-pkg",
+                "ecosystem": "npm",
+                "criticality": "Non-Critical",
+            }
+        )
 
-        assert result.get('is_malicious') is None  # key absent when not malicious
-        assert result['approval'] != 'PROHIBITED'
+        assert result.get("is_malicious") is None  # key absent when not malicious
+        assert result["approval"] != "PROHIBITED"
 
 
 # ---------------------------------------------------------------------------
 # Gap A: scoring.thresholds default values
 # ---------------------------------------------------------------------------
 
+
 class TestConfigThresholdsDefault:
     """Gap A — _load_config() must supply thresholds defaults when the YAML omits them."""
 
     def test_thresholds_populated_when_section_absent(self, tmp_path, monkeypatch):
         """Config without a thresholds section gets the standard defaults."""
-        (tmp_path / 'config.yaml').write_text(
+        (tmp_path / "config.yaml").write_text(
             "scoring:\n  weights:\n    activity: 30\n    trust: 20\n    security: 35\n    community: 15\n"
         )
         monkeypatch.chdir(tmp_path)
         from oss_scorer import OSSConfig
+
         cfg = OSSConfig().config
-        assert cfg['scoring']['thresholds'] == {
-            'critical': 90, 'high': 80, 'medium': 70, 'low': 60
-        }
+        assert cfg["scoring"]["thresholds"] == {"critical": 90, "high": 80, "medium": 70, "low": 60}
 
     def test_thresholds_preserved_when_explicitly_set(self, tmp_path, monkeypatch):
         """Custom threshold values are not overwritten by defaults."""
-        (tmp_path / 'config.yaml').write_text(
+        (tmp_path / "config.yaml").write_text(
             "scoring:\n  weights:\n    activity: 30\n    trust: 20\n    security: 35\n    community: 15\n"
             "  thresholds:\n    critical: 95\n    high: 85\n    medium: 75\n    low: 65\n"
         )
         monkeypatch.chdir(tmp_path)
         from oss_scorer import OSSConfig
+
         cfg = OSSConfig().config
-        assert cfg['scoring']['thresholds']['critical'] == 95
-        assert cfg['scoring']['thresholds']['high'] == 85
+        assert cfg["scoring"]["thresholds"]["critical"] == 95
+        assert cfg["scoring"]["thresholds"]["high"] == 85
 
 
 # ---------------------------------------------------------------------------
 # Gap B: EPSS thresholds read from config
 # ---------------------------------------------------------------------------
+
 
 class TestEpssConfigThresholds:
     """Gap B — _calculate_security_score must honour epss.high_threshold / epss.med_threshold from config."""
@@ -1475,38 +1568,44 @@ class TestEpssConfigThresholds:
         """With no epss config, default high threshold (0.5) is used."""
         wf = _make_workflow()
         # EPSS = 0.6 → >= default high threshold (0.5) → -15 deducted
-        result = wf._calculate_security_score({
-            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.6, 'id': 'CVE-1'}]},
-            'osv_data': {'is_malicious': False, 'extra_advisories': 0},
-        })
+        result = wf._calculate_security_score(
+            {
+                "cve_data": {"cves": [{"severity": "HIGH", "epss": 0.6, "id": "CVE-1"}]},
+                "osv_data": {"is_malicious": False, "extra_advisories": 0},
+            }
+        )
         assert result == 85.0  # 100 - 15
 
     def test_custom_high_threshold_shifts_cutoff(self):
         """When high_threshold=0.8 in config, epss=0.6 is only 'medium' risk."""
         cfg = {
             **MINIMAL_CONFIG,
-            'epss': {'enabled': True, 'timeout': 10, 'high_threshold': 0.8, 'med_threshold': 0.1},
+            "epss": {"enabled": True, "timeout": 10, "high_threshold": 0.8, "med_threshold": 0.1},
         }
         wf = _make_workflow(cfg)
         # EPSS = 0.6 is below high (0.8) but above med (0.1) → -8 instead of -15
-        result = wf._calculate_security_score({
-            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.6, 'id': 'CVE-1'}]},
-            'osv_data': {'is_malicious': False, 'extra_advisories': 0},
-        })
+        result = wf._calculate_security_score(
+            {
+                "cve_data": {"cves": [{"severity": "HIGH", "epss": 0.6, "id": "CVE-1"}]},
+                "osv_data": {"is_malicious": False, "extra_advisories": 0},
+            }
+        )
         assert result == 92.0  # 100 - 8
 
     def test_custom_med_threshold_shifts_cutoff(self):
         """When med_threshold=0.3, epss=0.2 falls below it → only low-risk deduction."""
         cfg = {
             **MINIMAL_CONFIG,
-            'epss': {'enabled': True, 'timeout': 10, 'high_threshold': 0.5, 'med_threshold': 0.3},
+            "epss": {"enabled": True, "timeout": 10, "high_threshold": 0.5, "med_threshold": 0.3},
         }
         wf = _make_workflow(cfg)
         # EPSS = 0.2 < med_threshold (0.3) but > 0 → -2 (low)
-        result = wf._calculate_security_score({
-            'cve_data': {'cves': [{'severity': 'HIGH', 'epss': 0.2, 'id': 'CVE-1'}]},
-            'osv_data': {'is_malicious': False, 'extra_advisories': 0},
-        })
+        result = wf._calculate_security_score(
+            {
+                "cve_data": {"cves": [{"severity": "HIGH", "epss": 0.2, "id": "CVE-1"}]},
+                "osv_data": {"is_malicious": False, "extra_advisories": 0},
+            }
+        )
         assert result == 98.0  # 100 - 2
 
 
@@ -1514,46 +1613,49 @@ class TestEpssConfigThresholds:
 # Gap C: scorecard.enabled flag respected
 # ---------------------------------------------------------------------------
 
+
 class TestScorecardEnabledFlag:
     """Gap C — get_scorecard() must return None immediately when scorecard.enabled is false."""
 
     def test_scorecard_disabled_returns_none_without_http_call(self):
-        cfg = {**MINIMAL_CONFIG, 'scorecard': {'enabled': False, 'timeout': 10}}
+        cfg = {**MINIMAL_CONFIG, "scorecard": {"enabled": False, "timeout": 10}}
         scorer = _make_scorer(cfg)
-        with patch('oss_scorer.requests.get') as mock_get:
-            result = scorer.get_scorecard('https://github.com/owner/repo')
+        with patch("oss_scorer.requests.get") as mock_get:
+            result = scorer.get_scorecard("https://github.com/owner/repo")
         assert result is None
         mock_get.assert_not_called()
 
     def test_scorecard_enabled_makes_http_call(self):
-        cfg = {**MINIMAL_CONFIG, 'scorecard': {'enabled': True, 'timeout': 5}}
+        cfg = {**MINIMAL_CONFIG, "scorecard": {"enabled": True, "timeout": 5}}
         scorer = _make_scorer(cfg)
         mock_resp = MagicMock(status_code=200)
         mock_resp.json.return_value = {
-            'score': 7.5,
-            'checks': [],
-            'repo': {'name': 'github.com/owner/repo'},
+            "score": 7.5,
+            "checks": [],
+            "repo": {"name": "github.com/owner/repo"},
         }
-        with patch('oss_scorer.requests.get', return_value=mock_resp):
-            result = scorer.get_scorecard('https://github.com/owner/repo')
+        with patch("oss_scorer.requests.get", return_value=mock_resp):
+            result = scorer.get_scorecard("https://github.com/owner/repo")
         assert result is not None
-        assert result.get('score') == 7.5
+        assert result.get("score") == 7.5
 
 
 # ---------------------------------------------------------------------------
 # Gap D: scoring weights sum validation
 # ---------------------------------------------------------------------------
 
+
 class TestWeightsSumWarning:
     """Gap D — _load_config() must emit a UserWarning when weights don't sum to 100."""
 
     def test_weights_not_summing_to_100_triggers_warning(self, tmp_path, monkeypatch):
-        (tmp_path / 'config.yaml').write_text(
+        (tmp_path / "config.yaml").write_text(
             "scoring:\n  weights:\n    activity: 30\n    trust: 20\n    security: 35\n    community: 10\n"
         )
         monkeypatch.chdir(tmp_path)
         import warnings as _warnings
         from oss_scorer import OSSConfig
+
         with _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
             OSSConfig()
@@ -1562,15 +1664,19 @@ class TestWeightsSumWarning:
         assert "95" in str(user_warns[0].message)  # weights sum to 95
 
     def test_weights_summing_to_100_no_warning(self, tmp_path, monkeypatch):
-        (tmp_path / 'config.yaml').write_text(
+        (tmp_path / "config.yaml").write_text(
             "scoring:\n  weights:\n    activity: 30\n    trust: 20\n    security: 35\n    community: 15\n"
         )
         monkeypatch.chdir(tmp_path)
         import warnings as _warnings
         from oss_scorer import OSSConfig
+
         with _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
             OSSConfig()
-        user_warns = [w for w in caught if issubclass(w.category, UserWarning)
-                      and "scoring.weights" in str(w.message)]
+        user_warns = [
+            w
+            for w in caught
+            if issubclass(w.category, UserWarning) and "scoring.weights" in str(w.message)
+        ]
         assert not user_warns, f"Unexpected UserWarning: {user_warns}"

@@ -1,7 +1,6 @@
 from pathlib import Path
 import importlib.util
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "scripts" / "osspolicyguard_action.py"
 
@@ -21,7 +20,10 @@ def test_parse_requirements_file(tmp_path):
 
 def test_parse_package_json(tmp_path):
     manifest = tmp_path / "package.json"
-    manifest.write_text('{"dependencies": {"react": "^18.0.0"}, "devDependencies": {"vitest": "^1.0.0"}}', encoding="utf-8")
+    manifest.write_text(
+        '{"dependencies": {"react": "^18.0.0"}, "devDependencies": {"vitest": "^1.0.0"}}',
+        encoding="utf-8",
+    )
 
     deps = module.parse_manifest_dependencies(str(manifest))
 

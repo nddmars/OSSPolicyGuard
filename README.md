@@ -70,6 +70,23 @@ osspolicyguard scan express --ecosystem npm --format json
 osspolicyguard scan lodash --ecosystem npm --format sarif
 ```
 
+### Scan every dependency in a manifest
+
+```bash
+osspolicyguard manifest                       # auto-detects package.json / requirements.txt
+osspolicyguard manifest path/to/requirements.txt --format json --review-fails-ci
+```
+
+Evaluates each declared dependency and exits with the worst-case code across the whole manifest
+(same precedence as a single `scan`: PROHIBITED > insufficient-data > REVIEW).
+
+### Other subcommands
+
+```bash
+osspolicyguard version                        # print the installed version and exit 0
+osspolicyguard scan express --log-level DEBUG # DEBUG/INFO/WARNING/ERROR; secrets are redacted
+```
+
 ### GitHub Actions
 
 A workflow that runs on pull requests is provided at `.github/workflows/osspolicyguard-action.yml` **for use within this repository**. It triggers when `requirements.txt` or `package.json` changes and calls `scripts/osspolicyguard_action.py`.
@@ -102,7 +119,7 @@ risk:
 |------|---------|
 | 0 | Package APPROVED |
 | 1 | Package PROHIBITED |
-| 2 | REVIEW decision (when `--review-fails-ci` is set) **or** unsupported command (e.g. `manifest`) |
+| 2 | REVIEW decision, when `--review-fails-ci` is set (`scan` or `manifest`) |
 | 3 | Configuration error |
 | 4 | Provider or network error |
 | 99 | Unexpected internal error |
@@ -116,7 +133,7 @@ Each package receives a composite score from 0 to 100 across four weighted dimen
 - **Supply-chain (20%)** — Project maturity via fork count. Contributor geolocation data is collected when enabled and reported separately in the `compliance.geo_jurisdiction` JSON field; it does not affect the technical score.
 - **Community (15%)** — Weekly download count (npm/PyPI true weekly; other registries estimated) and GitHub star count.
 
-> **Implementation note:** The `PolicyBundle`, `KevProvider`, `IdentityModel`, and modular provider classes (`github_provider.py`, `nvd_provider.py`) are part of the next-generation architecture and are not yet wired into the main scoring pipeline. The CLI currently calls the production `OSSScorer` / `OSSWorkflow` classes in `oss_scorer.py`. Provider stub files contain TODO comments indicating the integration work remaining. See [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for the full roadmap and implementation status.
+> **Implementation note:** The `PolicyBundle`, `KevProvider`, `IdentityModel`, and the typed provider classes under `src/osspolicyguard/providers/` (`github_provider.py`, `scorecard_provider.py`, `nvd_provider.py`, `osv_provider.py`, `epss_provider.py`, `registry_provider.py`) are part of the next-generation architecture. They are fully implemented against the `ProviderBase`/`ProviderResponse` contract and unit-tested, but are not yet wired into the production scoring pipeline — the CLI still calls the `OSSScorer` / `OSSWorkflow` classes in `oss_scorer.py`, which have their own equivalent (dict-based) provider logic. See [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for the full roadmap and implementation status.
 
 Hard block: a confirmed malicious-package flag (`is_malicious=True`) forces a PROHIBITED decision regardless of the numeric score.
 

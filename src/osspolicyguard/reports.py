@@ -13,8 +13,6 @@ to_markdown_pr(result, ...) → str           OPG-072
 
 from __future__ import annotations
 
-import json
-import textwrap
 from datetime import datetime, timezone
 from typing import Any
 
@@ -185,16 +183,12 @@ def build_findings(evaluation: dict) -> list[dict]:
 
     if epss_high > 0:
         high_epss_ids: list[str] = [
-            c.get("id", "")
-            for c in cves
-            if c.get("epss", 0.0) >= 0.5 and c.get("id")
+            c.get("id", "") for c in cves if c.get("epss", 0.0) >= 0.5 and c.get("id")
         ]
         findings.append(
             {
                 "code": "OPG-SEC-004",
-                "title": (
-                    f"{epss_high} CVE(s) with high exploit probability (EPSS≥0.5)"
-                ),
+                "title": (f"{epss_high} CVE(s) with high exploit probability (EPSS≥0.5)"),
                 "severity": "CRITICAL",
                 "dimension": "SECURITY",
                 "score_effect": max(-50, -15 * epss_high),
@@ -217,9 +211,7 @@ def build_findings(evaluation: dict) -> list[dict]:
         findings.append(
             {
                 "code": "OPG-SEC-005",
-                "title": (
-                    f"{extra_advisories} additional security advisories (GHSA/ecosystem)"
-                ),
+                "title": (f"{extra_advisories} additional security advisories (GHSA/ecosystem)"),
                 "severity": "MEDIUM",
                 "dimension": "SECURITY",
                 "score_effect": max(-20, -3 * extra_advisories),
@@ -338,7 +330,9 @@ def to_sarif(result: dict, tool_version: str = "0.1.0") -> dict:
     pkg_sub: dict = result.get("package") or {}
     if isinstance(pkg_sub, dict):
         pkg_ecosystem: str = pkg_sub.get("ecosystem") or result.get("ecosystem") or "unknown"
-        pkg_name: str = pkg_sub.get("name") or result.get("name") or result.get("package_name") or "unknown"
+        pkg_name: str = (
+            pkg_sub.get("name") or result.get("name") or result.get("package_name") or "unknown"
+        )
         pkg_version: str | None = pkg_sub.get("version") or result.get("version")
     else:
         pkg_ecosystem = result.get("ecosystem") or "unknown"
@@ -352,8 +346,10 @@ def to_sarif(result: dict, tool_version: str = "0.1.0") -> dict:
     score: float = float(result.get("score") or result.get("total_score") or 0.0)
     policy_sub: dict = result.get("policy") or {}
     policy_name: str = (
-        policy_sub.get("name") if isinstance(policy_sub, dict) else str(policy_sub)
-    ) or result.get("policy_name") or "default"
+        (policy_sub.get("name") if isinstance(policy_sub, dict) else str(policy_sub))
+        or result.get("policy_name")
+        or "default"
+    )
     generated_at: str = result.get("generated_at") or result.get("timestamp") or _now_utc_iso()
 
     # ---- Build de-duplicated rules list ------------------------------------
@@ -393,13 +389,7 @@ def to_sarif(result: dict, tool_version: str = "0.1.0") -> dict:
                 "ruleId": code,
                 "level": _sarif_level(severity),
                 "message": {"text": title},
-                "locations": [
-                    {
-                        "physicalLocation": {
-                            "artifactLocation": {"uri": purl_uri}
-                        }
-                    }
-                ],
+                "locations": [{"physicalLocation": {"artifactLocation": {"uri": purl_uri}}}],
                 "properties": {
                     "scoreEffect": score_effect,
                     "confidence": confidence,
@@ -409,9 +399,7 @@ def to_sarif(result: dict, tool_version: str = "0.1.0") -> dict:
 
     # ---- Assemble SARIF document -------------------------------------------
     return {
-        "$schema": (
-            "https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-schema-2.1.0.json"
-        ),
+        "$schema": ("https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-schema-2.1.0.json"),
         "version": "2.1.0",
         "runs": [
             {
@@ -471,7 +459,9 @@ def to_markdown_pr(result: dict, changed_only: bool = False) -> str:
     pkg_sub: dict = result.get("package") or {}
     if isinstance(pkg_sub, dict):
         pkg_ecosystem: str = pkg_sub.get("ecosystem") or result.get("ecosystem") or "unknown"
-        pkg_name: str = pkg_sub.get("name") or result.get("name") or result.get("package_name") or "unknown"
+        pkg_name: str = (
+            pkg_sub.get("name") or result.get("name") or result.get("package_name") or "unknown"
+        )
         pkg_version: str | None = pkg_sub.get("version") or result.get("version")
     else:
         pkg_ecosystem = result.get("ecosystem") or "unknown"
@@ -492,8 +482,10 @@ def to_markdown_pr(result: dict, changed_only: bool = False) -> str:
 
     policy_sub: dict = result.get("policy") or {}
     policy_name: str = (
-        policy_sub.get("name") if isinstance(policy_sub, dict) else str(policy_sub)
-    ) or result.get("policy_name") or "default"
+        (policy_sub.get("name") if isinstance(policy_sub, dict) else str(policy_sub))
+        or result.get("policy_name")
+        or "default"
+    )
 
     tool_version: str = result.get("tool_version") or "0.1.0"
 
@@ -521,9 +513,7 @@ def to_markdown_pr(result: dict, changed_only: bool = False) -> str:
     # Header
     lines.append("## \U0001f6e1️ OSSPolicyGuard — Dependency Scan")
     lines.append("")
-    lines.append(
-        f"**Package:** {pkg_display}  "
-    )
+    lines.append(f"**Package:** {pkg_display}  ")
     lines.append(
         f"**Decision: {badge} {decision}** | Score: {round(score, 1)}/100 | Policy: {policy_name}"
     )
@@ -606,8 +596,6 @@ def to_markdown_pr(result: dict, changed_only: bool = False) -> str:
         lines.append("")
 
     # Footer
-    lines.append(
-        f"_Powered by [OSSPolicyGuard]({_REPO_URL}) v{tool_version}_"
-    )
+    lines.append(f"_Powered by [OSSPolicyGuard]({_REPO_URL}) v{tool_version}_")
 
     return "\n".join(lines)

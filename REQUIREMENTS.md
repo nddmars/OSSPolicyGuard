@@ -279,7 +279,7 @@ requirement are listed with their OPG ID.
 | 14.8 | Release cadence scoring | Low | — | No formal requirement yet |
 | 14.9 | Issue/PR response time metric | Low | — | No formal requirement yet |
 | 14.10 | Commit frequency metric | Low | — | No formal requirement yet |
-| 14.11 | Multi-package batch evaluation | Low | OPG-068 | CLI manifest scan |
+| 14.11 | ~~Multi-package batch evaluation~~ | Done | OPG-068 | Implemented as `osspolicyguard manifest`; see §23.20 |
 | 14.12 | Historical trend dashboard | Low | — | No formal requirement yet |
 | 14.13 | HTML / PDF report export | Low | OPG-137 | Via license compliance report; general export roadmap |
 | 14.14 | Maven download count | Low | — | Pending public Maven Central API |
@@ -395,9 +395,11 @@ requirement are listed with their OPG ID.
 | 23.17 | `compliance` field in JSON output | ✅ | Contains `geo_jurisdiction` sub-section when geo enabled |
 | 23.18 | Provider warnings in all output formats | ✅ | Text, JSON, Markdown; lists each named provider failure |
 | 23.19 | `osspolicyguard version` subcommand | ✅ | Prints installed package version and exits 0 |
-| 23.20 | `osspolicyguard manifest` subcommand (placeholder) | ✅ | Returns exit 2 with "not yet implemented" message (OPG-068) |
+| 23.20 | `osspolicyguard manifest` subcommand (OPG-068) | ✅ | Auto-detects or accepts a manifest path (`package.json`/`requirements.txt`), scans every declared dependency, and aggregates the worst-case exit code (PROHIBITED > insufficient-data > REVIEW) |
 | 23.21 | `--log-level` flag | ✅ | DEBUG / INFO / WARNING / ERROR; wires into `configure_logging()` with secret-redacting filter |
 
 ---
 
-*Last updated: 2026-08-25 — CLI section 23 added; 255 tests passing.*
+*Last updated: 2026-08-29 — manifest subcommand (OPG-068) implemented; six typed next-gen
+providers (§3) implemented against the `ProviderBase` contract; CI now gates on ruff/black/mypy;
+282 tests passing.*
