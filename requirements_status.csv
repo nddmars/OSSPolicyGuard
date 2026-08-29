@@ -1,7 +1,7 @@
 id,requirement,status,notes,file,updated_at
 REQ-001,Public product contract,Done,README documents manifest subcommand exit-code precedence and next-gen provider status,README.md,2026-08-29
 REQ-002,Safe signal policy,Done,Default scoring remains neutral; optional jurisdiction rule is explicitly opt-in and labeled as compliance,oss_scorer.py,2026-08-10
-REQ-010,Maintainable package layout,In Progress,Typed provider layer fully implemented; wiring it into OSSScorer (replacing the legacy dict-based providers) remains,src/osspolicyguard/providers/,2026-08-29
+REQ-010,Maintainable package layout,In Progress,Unified GitHub-URL parsing (previously duplicated 3x in oss_scorer.py plus once more in the typed provider incl. a netloc-spoofing bug) into one canonical function shared by both provider layers; full HTTP-call wiring of OSSScorer onto the typed providers still remains (blocked on feature parity: NVD lookback/CVSS chain EPSS batching all 6 registries contributor geolocation),oss_scorer.py,2026-08-29
 REQ-011,Installable package and CLI entry point,Done,pyproject entry point and installable package verified,pyproject.toml,2026-08-05
 REQ-012,Quality automation,Done,ruff/black/mypy gates added to CI and passing; pre-existing lint/format/type issues fixed,.github/workflows/tests.yml,2026-08-29
 REQ-020,Package scan command,Done,scan and manifest (OPG-068) subcommands implemented with text/json/sarif/markdown output,src/osspolicyguard/cli.py,2026-08-29

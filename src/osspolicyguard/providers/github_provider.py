@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlparse
 
 import requests
 
@@ -115,11 +114,14 @@ class GitHubProvider(ProviderBase):
 
     @staticmethod
     def _parse_owner_repo(repo_url: str) -> tuple[str, str]:
-        parsed = urlparse(repo_url)
-        if "github.com" not in parsed.netloc:
-            raise ValueError(f"Not a GitHub URL: {repo_url}")
-        parts = [p for p in parsed.path.split("/") if p]
-        if len(parts) < 2:
-            raise ValueError(f"Cannot parse owner/repo from: {repo_url}")
-        repo = parts[1][:-4] if parts[1].endswith(".git") else parts[1]
-        return parts[0], repo
+        """Extract (owner, repo) from a GitHub URL.
+
+        Delegates to oss_scorer's canonical parser (REQ-010) so this typed
+        provider and the legacy engine agree on what counts as a valid
+        GitHub URL — in particular, a strict netloc allow-list rather than a
+        substring check, which would otherwise accept a spoofed host such as
+        ``notgithub.com``.
+        """
+        from oss_scorer import _parse_github_owner_repo
+
+        return _parse_github_owner_repo(repo_url)

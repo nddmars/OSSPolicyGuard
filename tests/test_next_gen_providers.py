@@ -67,6 +67,23 @@ class TestGitHubProvider:
         response = provider.fetch("https://gitlab.com/owner/repo")
         assert response.status == ProviderStatus.MALFORMED
 
+    def test_spoofed_netloc_rejected(self):
+        """A host that merely contains 'github.com' as a substring must not
+        be accepted (REQ-010: shares oss_scorer's strict netloc allow-list)."""
+        provider = GitHubProvider({"github": {"timeout": 5}})
+        response = provider.fetch("https://notgithub.com/owner/repo")
+        assert response.status == ProviderStatus.MALFORMED
+
+    def test_trailing_slash_and_dot_git(self):
+        assert GitHubProvider._parse_owner_repo("https://github.com/owner/repo/") == (
+            "owner",
+            "repo",
+        )
+        assert GitHubProvider._parse_owner_repo("https://github.com/owner/repo.git") == (
+            "owner",
+            "repo",
+        )
+
     def test_auth_error(self, monkeypatch):
         monkeypatch.setattr(
             "osspolicyguard.providers.github_provider.requests.get",

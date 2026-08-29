@@ -21,6 +21,26 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 logger = logging.getLogger(__name__)
 
 
+def _parse_github_owner_repo(url: str) -> tuple[str, str]:
+    """Extract (owner, repo) from a GitHub URL, raising ValueError on bad input.
+
+    Single canonical implementation (REQ-010): shared by GitHubProvider,
+    ScorecardProvider, and OSSScorer below, and reused by the typed
+    src/osspolicyguard/providers/github_provider.py so both provider layers
+    agree on what counts as a valid GitHub repository URL.
+    """
+    parsed = urlparse(url.rstrip("/"))
+    if parsed.netloc not in ("github.com", "www.github.com"):
+        raise ValueError(f"Not a GitHub URL: {url!r}")
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) < 2:
+        raise ValueError(f"Cannot extract owner/repo from URL: {url!r}")
+    repo_name = parts[-1]
+    if repo_name.endswith(".git"):
+        repo_name = repo_name[:-4]
+    return parts[-2], repo_name
+
+
 class ProviderStatus(str, Enum):
     SUCCESS = "success"
     TIMEOUT = "timeout"
@@ -209,16 +229,7 @@ class GitHubProvider(ProviderBase):
         )
 
     def _parse_github_owner_repo(self, url: str) -> tuple[str, str]:
-        parsed = urlparse(url.rstrip("/"))
-        if parsed.netloc not in ("github.com", "www.github.com"):
-            raise ValueError(f"Not a GitHub URL: {url!r}")
-        parts = [p for p in parsed.path.split("/") if p]
-        if len(parts) < 2:
-            raise ValueError(f"Cannot extract owner/repo from URL: {url!r}")
-        repo_name = parts[-1]
-        if repo_name.endswith(".git"):
-            repo_name = repo_name[:-4]
-        return parts[-2], repo_name
+        return _parse_github_owner_repo(url)
 
     def fetch(self, repo_url: str) -> ProviderResponse:
         try:
@@ -258,16 +269,7 @@ class ScorecardProvider(ProviderBase):
         )
 
     def _parse_github_owner_repo(self, url: str) -> tuple[str, str]:
-        parsed = urlparse(url.rstrip("/"))
-        if parsed.netloc not in ("github.com", "www.github.com"):
-            raise ValueError(f"Not a GitHub URL: {url!r}")
-        parts = [p for p in parsed.path.split("/") if p]
-        if len(parts) < 2:
-            raise ValueError(f"Cannot extract owner/repo from URL: {url!r}")
-        repo_name = parts[-1]
-        if repo_name.endswith(".git"):
-            repo_name = repo_name[:-4]
-        return parts[-2], repo_name
+        return _parse_github_owner_repo(url)
 
     def fetch(self, repo_url: str) -> ProviderResponse:
         try:
@@ -794,16 +796,7 @@ class OSSScorer:
 
     def _parse_github_owner_repo(self, url: str) -> tuple:
         """Extract (owner, repo) from a GitHub URL, raising ValueError on bad input."""
-        parsed = urlparse(url.rstrip("/"))
-        if parsed.netloc not in ("github.com", "www.github.com"):
-            raise ValueError(f"Not a GitHub URL: {url!r}")
-        parts = [p for p in parsed.path.split("/") if p]
-        if len(parts) < 2:
-            raise ValueError(f"Cannot extract owner/repo from URL: {url!r}")
-        repo_name = parts[-1]
-        if repo_name.endswith(".git"):
-            repo_name = repo_name[:-4]
-        return parts[-2], repo_name
+        return _parse_github_owner_repo(url)
 
     def _build_headers(self, service: str) -> dict:
         """Build authentication headers for GitHub or NVD API requests."""
