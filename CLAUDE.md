@@ -33,6 +33,8 @@ src/osspolicyguard/
   exceptions.py                # OSSPolicyGuardError hierarchy
   policy.py                    # PolicyBundle (next-gen; not yet wired into OSSScorer)
   license_compliance.py        # SPDX normalization, copyleft, compatibility policy, NOTICE (§15)
+  dependency_pinning.py        # Version-specifier classification, pinning policy, lockfile hash checks (§16.1)
+  eol.py                       # Bundled end-of-life dataset + check_eol() (§16.2)
   providers/                   # Next-gen typed providers (implemented; not yet wired into OSSScorer)
     __init__.py                # ProviderBase ABC, ProviderResponse, ProviderStatus, NullProvider
     github_provider.py         # GitHubProvider
@@ -41,6 +43,7 @@ src/osspolicyguard/
     epss_provider.py           # EPSSProvider
     scorecard_provider.py      # ScorecardProvider
     registry_provider.py       # RegistryProvider (pypi/npm/maven)
+    endoflife_provider.py      # EndOfLifeDateProvider (endoflife.date API)
   advisory_dedup.py            # Advisory deduplication helpers
   artifact_inventory.py        # (stub) Artifact inventory
   dep_confusion.py             # (stub) Dependency-confusion detection
@@ -58,6 +61,8 @@ tests/
   test_new_modules.py          # Stub module tests
   test_action_script.py        # GitHub Action script tests
   test_license_compliance.py   # license_compliance.py unit tests
+  test_dependency_pinning.py   # dependency_pinning.py unit tests
+  test_eol.py                  # eol.py unit tests
   golden/small_result.json     # Golden fixture for report tests
 
 scripts/
@@ -240,7 +245,7 @@ result under `result["compliance"]["geo_jurisdiction"]` with `affects_technical_
 ## Running tests
 
 ```bash
-python -m pytest tests/ -q          # 328 tests, all must pass
+python -m pytest tests/ -q          # 382 tests, all must pass
 python -m pytest tests/test_cli.py  # CLI tests only
 python -m pytest tests/test_round3_fixes.py  # Provider-safety regression suite
 

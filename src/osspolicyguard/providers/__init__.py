@@ -32,6 +32,7 @@ __all__ = [
     "OSVProvider",
     "EPSSProvider",
     "RegistryProvider",
+    "EndOfLifeDateProvider",
 ]
 
 
@@ -44,6 +45,7 @@ def __getattr__(name: str) -> Any:
         "OSVProvider": ".osv_provider",
         "EPSSProvider": ".epss_provider",
         "RegistryProvider": ".registry_provider",
+        "EndOfLifeDateProvider": ".endoflife_provider",
     }
     module_name = _lazy.get(name)
     if module_name is None:

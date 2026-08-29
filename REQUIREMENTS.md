@@ -308,8 +308,8 @@ License compliance is implemented as a standalone module (`license_compliance.py
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
-| 16.1 | Dependency pinning policy enforcement (OPG-139) | ❌ | Flag manifests with floating ranges (^, ~, *, latest, >x); configurable allowed range styles per ecosystem; lockfile hash-pin requirement separately configurable |
-| 16.2 | End-of-life and formal deprecation tracking (OPG-140) | ❌ | Ingest official EOL dates from registry deprecation flags, endoflife.date API, and language-runtime schedules; surface as distinct REVIEW/PROHIBITED finding with exact EOL date |
+| 16.1 | Dependency pinning policy enforcement (OPG-139) | ⚠️ | `src/osspolicyguard/dependency_pinning.py` classifies specifiers (caret/tilde/wildcard/latest/unbounded/range/exact) and checks them against a configurable `allowed_styles`/`deny_floating` policy; lockfile hash-pin checks for npm `package-lock.json` and pip-compile `requirements.txt` are separately configurable via `osspolicyguard pinning --lockfile`. Policy is global, not yet per-ecosystem, and manifest-scan integration (auto-extracting specifiers from `package.json`/`requirements.txt`) isn't wired in — callers supply specifiers directly or via `--batch` |
+| 16.2 | End-of-life and formal deprecation tracking (OPG-140) | ⚠️ | `src/osspolicyguard/eol.py` checks a product/cycle against a bundled EOL dataset (Python, Node.js, Ruby, PHP), surfacing REVIEW (or PROHIBITED via `--prohibit-past-eol`) with the exact EOL date. `EndOfLifeDateProvider` (typed, tested) can fetch live data from the public endoflife.date API to extend the bundled dataset, but registry-deprecation-flag ingestion and CLI wiring for the live provider are not yet implemented |
 
 ---
 
@@ -402,8 +402,11 @@ License compliance is implemented as a standalone module (`license_compliance.py
 
 ---
 
-*Last updated: 2026-08-29 — manifest subcommand (OPG-068) implemented; six typed next-gen
-providers (§3) implemented against the `ProviderBase` contract; CI now gates on ruff/black/mypy;
-GitHub-URL parsing unified across both provider layers (REQ-010, fixing a netloc-spoofing bug in
-the typed provider); license compliance engine and `osspolicyguard license` subcommand
-implemented (§15, OPG-134/135/136/137/138 done, OPG-133 partial — see 15.1); 328 tests passing.*
+*Last updated: 2026-08-29 — manifest subcommand (OPG-068) implemented; seven typed next-gen
+providers (§3) implemented against the `ProviderBase` contract (incl. `EndOfLifeDateProvider`);
+CI now gates on ruff/black/mypy; GitHub-URL parsing unified across both provider layers (REQ-010,
+fixing a netloc-spoofing bug in the typed provider); license compliance engine and
+`osspolicyguard license` subcommand implemented (§15, OPG-134/135/136/137/138 done, OPG-133
+partial); dependency pinning policy and end-of-life tracking implemented (§16,
+`osspolicyguard pinning` / `osspolicyguard eol`, OPG-139/140 both partial — see notes);
+382 tests passing.*

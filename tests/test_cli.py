@@ -392,3 +392,110 @@ def test_cli_license_custom_policy_file(tmp_path, capsys):
         ["license", "requests", "--license", "MIT", "--policy-file", str(policy_file)]
     )
     assert exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# pinning subcommand (requirements.md §16.1, OPG-139)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_pinning_exact_passes(capsys):
+    exit_code = cli.main(["pinning", "requests", "--specifier", "2.31.0", "--format", "json"])
+    assert exit_code == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["summary"] == {"PASS": 1, "REVIEW": 0, "PROHIBITED": 0}
+
+
+def test_cli_pinning_caret_is_review_and_ci_fails(capsys):
+    exit_code = cli.main(["pinning", "express", "--specifier", "^4.18.0", "--review-fails-ci"])
+    assert exit_code == 2
+
+
+def test_cli_pinning_deny_floating_prohibits(capsys):
+    exit_code = cli.main(["pinning", "express", "--specifier", "^4.18.0", "--deny-floating"])
+    assert exit_code == 1
+
+
+def test_cli_pinning_batch_mode(tmp_path, capsys):
+    batch_file = tmp_path / "deps.json"
+    batch_file.write_text(json.dumps([{"package_name": "requests", "specifier": "2.31.0"}]))
+    exit_code = cli.main(["pinning", "--batch", str(batch_file), "--format", "json"])
+    assert exit_code == 0
+
+
+def test_cli_pinning_npm_lockfile(tmp_path, capsys):
+    lockfile = tmp_path / "package-lock.json"
+    lockfile.write_text(
+        json.dumps(
+            {
+                "packages": {
+                    "": {"name": "root"},
+                    "node_modules/express": {"version": "4.18.0"},
+                }
+            }
+        )
+    )
+    exit_code = cli.main(["pinning", "--lockfile", str(lockfile), "--format", "json"])
+    assert exit_code == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["unhashed"] == ["express"]
+
+
+def test_cli_pinning_npm_lockfile_review_fails_ci(tmp_path, capsys):
+    lockfile = tmp_path / "package-lock.json"
+    lockfile.write_text(
+        json.dumps({"packages": {"": {}, "node_modules/express": {"version": "4.18.0"}}})
+    )
+    exit_code = cli.main(["pinning", "--lockfile", str(lockfile), "--review-fails-ci"])
+    assert exit_code == 2
+
+
+def test_cli_pinning_missing_input_returns_exit_3(capsys):
+    exit_code = cli.main(["pinning"])
+    assert exit_code == 3
+
+
+# ---------------------------------------------------------------------------
+# eol subcommand (requirements.md §16.2, OPG-140)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_eol_past_eol_is_review(capsys):
+    exit_code = cli.main(["eol", "python", "3.8", "--as-of", "2026-01-01", "--format", "json"])
+    assert exit_code == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["summary"]["REVIEW"] == 1
+
+
+def test_cli_eol_prohibit_past_eol(capsys):
+    exit_code = cli.main(["eol", "python", "3.8", "--as-of", "2026-01-01", "--prohibit-past-eol"])
+    assert exit_code == 1
+
+
+def test_cli_eol_not_past_eol_passes(capsys):
+    exit_code = cli.main(["eol", "python", "3.12", "--as-of", "2026-01-01"])
+    assert exit_code == 0
+
+
+def test_cli_eol_review_fails_ci(capsys):
+    exit_code = cli.main(["eol", "python", "3.8", "--as-of", "2026-01-01", "--review-fails-ci"])
+    assert exit_code == 2
+
+
+def test_cli_eol_batch_mode(tmp_path, capsys):
+    batch_file = tmp_path / "products.json"
+    batch_file.write_text(json.dumps([{"product": "python", "cycle": "3.12"}]))
+    exit_code = cli.main(
+        ["eol", "--batch", str(batch_file), "--as-of", "2026-01-01", "--format", "json"]
+    )
+    assert exit_code == 0
+
+
+def test_cli_eol_invalid_as_of_returns_exit_3(capsys):
+    exit_code = cli.main(["eol", "python", "3.8", "--as-of", "not-a-date"])
+    assert exit_code == 3
+
+
+def test_cli_eol_missing_input_returns_exit_3(capsys):
+    exit_code = cli.main(["eol"])
+    assert exit_code == 3

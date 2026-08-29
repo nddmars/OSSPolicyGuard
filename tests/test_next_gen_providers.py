@@ -23,6 +23,7 @@ from osspolicyguard.providers.nvd_provider import NVDProvider
 from osspolicyguard.providers.osv_provider import OSVProvider
 from osspolicyguard.providers.epss_provider import EPSSProvider
 from osspolicyguard.providers.registry_provider import RegistryProvider
+from osspolicyguard.providers.endoflife_provider import EndOfLifeDateProvider
 
 
 def _mock_response(status_code=200, json_data=None, url="https://example.test"):
@@ -329,4 +330,55 @@ class TestRegistryProvider:
         )
         provider = RegistryProvider({"registry": {"timeout": 5}})
         response = provider.fetch("pypi", "does-not-exist")
+        assert response.status == ProviderStatus.UNAVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# EndOfLifeDateProvider
+# ---------------------------------------------------------------------------
+
+
+class TestEndOfLifeDateProvider:
+    def test_success(self, monkeypatch):
+        payload = [
+            {"cycle": "3.9", "eol": "2025-10-05", "latest": "3.9.19"},
+            {"cycle": "3.12", "eol": "2028-10-02", "latest": "3.12.3"},
+        ]
+        monkeypatch.setattr(
+            "osspolicyguard.providers.endoflife_provider.requests.get",
+            lambda *a, **k: _mock_response(200, payload),
+        )
+        provider = EndOfLifeDateProvider({"endoflife": {"timeout": 5}})
+        response = provider.fetch("python")
+
+        assert response.is_success()
+        assert response.data["product"] == "python"
+        assert response.data["cycles"][0]["cycle"] == "3.9"
+        assert response.data["cycles"][0]["eol"] == "2025-10-05"
+
+    def test_unknown_product(self, monkeypatch):
+        monkeypatch.setattr(
+            "osspolicyguard.providers.endoflife_provider.requests.get",
+            lambda *a, **k: _mock_response(404),
+        )
+        provider = EndOfLifeDateProvider({"endoflife": {"timeout": 5}})
+        response = provider.fetch("not-a-real-product")
+        assert response.status == ProviderStatus.UNAVAILABLE
+
+    def test_rate_limit(self, monkeypatch):
+        monkeypatch.setattr(
+            "osspolicyguard.providers.endoflife_provider.requests.get",
+            lambda *a, **k: _mock_response(429),
+        )
+        provider = EndOfLifeDateProvider({"endoflife": {"timeout": 5}})
+        response = provider.fetch("python")
+        assert response.status == ProviderStatus.RATE_LIMIT
+
+    def test_network_error(self, monkeypatch):
+        def _raise(*a, **k):
+            raise requests.ConnectionError("boom")
+
+        monkeypatch.setattr("osspolicyguard.providers.endoflife_provider.requests.get", _raise)
+        provider = EndOfLifeDateProvider({"endoflife": {"timeout": 5}})
+        response = provider.fetch("python")
         assert response.status == ProviderStatus.UNAVAILABLE

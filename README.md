@@ -103,6 +103,25 @@ policy via `--policy-file <json>`). Exits 1 if any package is PROHIBITED, 2 on R
 `--review-fails-ci`. This subcommand is standalone — it does not require `config.yaml` — and is not
 yet wired into `scan`/`manifest`'s own output (see `requirements.md` §15.1).
 
+### Dependency pinning and end-of-life checks
+
+```bash
+osspolicyguard pinning express --specifier "^4.18.0"          # -> REVIEW (floating range)
+osspolicyguard pinning express --specifier "^4.18.0" --deny-floating  # -> PROHIBITED
+osspolicyguard pinning --lockfile package-lock.json            # hash-pin coverage, npm
+osspolicyguard pinning --lockfile requirements.txt --lockfile-type pip
+
+osspolicyguard eol python 3.8 --as-of 2026-01-01                # -> REVIEW (past EOL)
+osspolicyguard eol python 3.8 --prohibit-past-eol
+```
+
+`pinning` classifies a version specifier's range style (exact/caret/tilde/wildcard/latest/
+unbounded/range) against a configurable policy, and separately checks npm `package-lock.json` /
+pip-compile `requirements.txt` for hash-pinned entries. `eol` checks a language runtime/platform
+version against a small bundled end-of-life dataset (Python, Node.js, Ruby, PHP); both accept
+`--batch <file.json>` for multiple entries. Like `license`, both are standalone and not yet wired
+into `scan`/`manifest`'s own output (see `requirements.md` §16).
+
 ### GitHub Actions
 
 A workflow that runs on pull requests is provided at `.github/workflows/osspolicyguard-action.yml` **for use within this repository**. It triggers when `requirements.txt` or `package.json` changes and calls `scripts/osspolicyguard_action.py`.

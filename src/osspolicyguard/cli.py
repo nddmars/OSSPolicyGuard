@@ -352,6 +352,171 @@ def scan_license(
     return 0
 
 
+def scan_pinning(
+    package_name: str | None = None,
+    specifier: str | None = None,
+    batch_path: str | None = None,
+    lockfile_path: str | None = None,
+    lockfile_type: str | None = None,
+    deny_floating: bool = False,
+    fmt: str = "text",
+    review_fails_ci: bool = False,
+) -> int:
+    """Dependency pinning policy check (requirements.md §16.1, OPG-139).
+
+    Single-package mode takes --specifier directly; --batch reads a JSON
+    file of ``[{"package_name": ..., "specifier": ...}, ...]``; --lockfile
+    (with --lockfile-type npm|pip) instead runs a hash-pin check over an
+    npm package-lock.json or pip-compile-style requirements.txt.
+    """
+    from .dependency_pinning import (
+        DEFAULT_PINNING_POLICY,
+        build_pinning_report,
+        check_npm_lockfile_hashes,
+        check_requirements_hashes,
+        evaluate_pinning,
+        to_pinning_markdown,
+    )
+
+    if lockfile_path:
+        try:
+            with open(lockfile_path, encoding="utf-8") as fh:
+                content = fh.read()
+        except OSError as exc:
+            print(f"Failed to read lockfile {lockfile_path!r}: {exc}", file=sys.stderr)
+            return 3
+
+        lf_type = lockfile_type or ("npm" if lockfile_path.endswith(".json") else "pip")
+        if lf_type == "npm":
+            try:
+                stats = check_npm_lockfile_hashes(json.loads(content))
+            except ValueError as exc:
+                print(f"Failed to parse lockfile {lockfile_path!r}: {exc}", file=sys.stderr)
+                return 3
+        else:
+            stats = check_requirements_hashes(content)
+
+        if fmt == "json":
+            print(json.dumps(stats, indent=2))
+        else:
+            print(f"Lockfile: {lockfile_path} ({lf_type})")
+            print(f"  {stats['hashed']}/{stats['total']} dependencies are hash-pinned")
+            if stats["unhashed"]:
+                print(f"  Missing hash pins: {', '.join(stats['unhashed'])}")
+
+        if stats["unhashed"] and review_fails_ci:
+            return 2
+        return 0
+
+    entries: list[dict[str, Any]]
+    if batch_path:
+        try:
+            with open(batch_path, encoding="utf-8") as fh:
+                entries = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print(f"Failed to load batch file {batch_path!r}: {exc}", file=sys.stderr)
+            return 3
+    elif package_name:
+        entries = [{"package_name": package_name, "specifier": specifier}]
+    else:
+        print(
+            "Provide a package name with --specifier, --batch <file.json>, "
+            "or --lockfile <path>.",
+            file=sys.stderr,
+        )
+        return 3
+
+    policy = dict(DEFAULT_PINNING_POLICY)
+    policy["deny_floating"] = deny_floating
+
+    findings = [
+        evaluate_pinning(
+            entry.get("package_name", "unknown"), entry.get("specifier"), policy=policy
+        )
+        for entry in entries
+    ]
+
+    if fmt == "json":
+        print(json.dumps(build_pinning_report(findings), indent=2))
+    elif fmt == "markdown":
+        print(to_pinning_markdown(findings))
+    else:
+        for finding in findings:
+            print(
+                f"{finding.package_name}: {finding.raw_specifier or '(none)'} "
+                f"[{finding.range_style}] -> {finding.verdict}"
+            )
+            print(f"  {finding.reason}")
+
+    if any(f.verdict == "PROHIBITED" for f in findings):
+        return 1
+    if review_fails_ci and any(f.verdict == "REVIEW" for f in findings):
+        return 2
+    return 0
+
+
+def scan_eol(
+    product: str | None = None,
+    cycle: str | None = None,
+    batch_path: str | None = None,
+    as_of: str | None = None,
+    prohibit_past_eol: bool = False,
+    fmt: str = "text",
+    review_fails_ci: bool = False,
+) -> int:
+    """End-of-life / deprecation check (requirements.md §16.2, OPG-140)."""
+    import datetime as _datetime
+
+    from .eol import build_eol_report, check_eol, to_eol_markdown
+
+    as_of_date = None
+    if as_of:
+        try:
+            as_of_date = _datetime.datetime.strptime(as_of, "%Y-%m-%d").date()
+        except ValueError:
+            print(f"Invalid --as-of date {as_of!r}; expected YYYY-MM-DD.", file=sys.stderr)
+            return 3
+
+    entries: list[dict[str, Any]]
+    if batch_path:
+        try:
+            with open(batch_path, encoding="utf-8") as fh:
+                entries = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print(f"Failed to load batch file {batch_path!r}: {exc}", file=sys.stderr)
+            return 3
+    elif product and cycle:
+        entries = [{"product": product, "cycle": cycle}]
+    else:
+        print("Provide a product and cycle, or --batch <file.json>.", file=sys.stderr)
+        return 3
+
+    findings = [
+        check_eol(
+            entry["product"],
+            entry["cycle"],
+            as_of=as_of_date,
+            prohibit_past_eol=prohibit_past_eol,
+        )
+        for entry in entries
+    ]
+
+    if fmt == "json":
+        print(json.dumps(build_eol_report(findings), indent=2))
+    elif fmt == "markdown":
+        print(to_eol_markdown(findings))
+    else:
+        for finding in findings:
+            print(f"{finding.product} {finding.cycle}: {finding.verdict}")
+            print(f"  {finding.reason}")
+
+    if any(f.verdict == "PROHIBITED" for f in findings):
+        return 1
+    if review_fails_ci and any(f.verdict == "REVIEW" for f in findings):
+        return 2
+    return 0
+
+
 def _get_version() -> str:
     try:
         import importlib.metadata
@@ -483,6 +648,79 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Treat any REVIEW verdict as a CI failure (exit code 2).",
     )
 
+    # pinning subcommand  (requirements.md §16.1, OPG-139)
+    pinning_parser = subparsers.add_parser(
+        "pinning", help="Check dependency version specifiers against a pinning policy."
+    )
+    pinning_parser.add_argument(
+        "package", nargs="?", help="Package name (used with --specifier for single-package mode)."
+    )
+    pinning_parser.add_argument(
+        "--specifier", help="The package's declared version specifier (e.g. '^1.2.3')."
+    )
+    pinning_parser.add_argument(
+        "--batch",
+        dest="batch_path",
+        help='JSON file of [{"package_name": ..., "specifier": ...}, ...].',
+    )
+    pinning_parser.add_argument(
+        "--lockfile",
+        dest="lockfile_path",
+        help="Check a lockfile for hash-pinned entries instead of a range-style policy.",
+    )
+    pinning_parser.add_argument(
+        "--lockfile-type",
+        choices=["npm", "pip"],
+        help="Lockfile format (default: inferred from the file extension).",
+    )
+    pinning_parser.add_argument(
+        "--deny-floating",
+        action="store_true",
+        help="Escalate any floating (non-exact) specifier to PROHIBITED.",
+    )
+    pinning_parser.add_argument(
+        "--format",
+        choices=["text", "json", "markdown"],
+        default="text",
+        help="Output format: text, json, markdown (default: text).",
+    )
+    pinning_parser.add_argument(
+        "--review-fails-ci",
+        action="store_true",
+        help="Treat any REVIEW verdict (or unhashed lockfile entry) as a CI failure (exit code 2).",
+    )
+
+    # eol subcommand  (requirements.md §16.2, OPG-140)
+    eol_parser = subparsers.add_parser(
+        "eol", help="Check a language runtime/platform version against its end-of-life date."
+    )
+    eol_parser.add_argument("product", nargs="?", help="Product name, e.g. 'python'.")
+    eol_parser.add_argument("cycle", nargs="?", help="Release cycle, e.g. '3.8'.")
+    eol_parser.add_argument(
+        "--batch",
+        dest="batch_path",
+        help='JSON file of [{"product": ..., "cycle": ...}, ...].',
+    )
+    eol_parser.add_argument(
+        "--as-of", help="Evaluate as of this date (YYYY-MM-DD) instead of today."
+    )
+    eol_parser.add_argument(
+        "--prohibit-past-eol",
+        action="store_true",
+        help="Escalate a past-end-of-life product/cycle to PROHIBITED instead of REVIEW.",
+    )
+    eol_parser.add_argument(
+        "--format",
+        choices=["text", "json", "markdown"],
+        default="text",
+        help="Output format: text, json, markdown (default: text).",
+    )
+    eol_parser.add_argument(
+        "--review-fails-ci",
+        action="store_true",
+        help="Treat any REVIEW verdict as a CI failure (exit code 2).",
+    )
+
     return parser
 
 
@@ -529,6 +767,29 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 policy_path=args.policy_path,
                 fmt=args.format,
                 notice=args.notice,
+                review_fails_ci=args.review_fails_ci,
+            )
+
+        if args.command == "pinning":
+            return scan_pinning(
+                package_name=args.package,
+                specifier=args.specifier,
+                batch_path=args.batch_path,
+                lockfile_path=args.lockfile_path,
+                lockfile_type=args.lockfile_type,
+                deny_floating=args.deny_floating,
+                fmt=args.format,
+                review_fails_ci=args.review_fails_ci,
+            )
+
+        if args.command == "eol":
+            return scan_eol(
+                product=args.product,
+                cycle=args.cycle,
+                batch_path=args.batch_path,
+                as_of=args.as_of,
+                prohibit_past_eol=args.prohibit_past_eol,
+                fmt=args.format,
                 review_fails_ci=args.review_fails_ci,
             )
 
