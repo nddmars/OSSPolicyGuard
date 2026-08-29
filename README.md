@@ -38,7 +38,7 @@ A confirmed malicious-package flag (`is_malicious=True` from the OSV/ossf malici
 
 - **Not a guarantee of safety.** Scores are probability signals, not certainty. A high score does not mean a package is safe; a low score does not mean it is dangerous.
 - **No transitive dependency analysis yet.** Only direct dependencies are evaluated. Transitive scanning is on the roadmap.
-- **No license compliance detection yet.** License identification is on the roadmap.
+- **License compliance is a standalone subcommand, not part of `scan`.** `osspolicyguard license` classifies a license you supply (or a batch file); it does not yet auto-detect a package's declared license from registry metadata as part of a regular `scan`/`manifest` run.
 - **Scorecard requires a public GitHub repository.** Packages without a detectable public repository receive a partial score on the supply-chain dimension.
 - **Download counts are weekly estimates.** Methodology varies by registry and is documented in the Supported ecosystems table above.
 - **Geolocation is opt-in only.** Geographic jurisdiction checks are excluded from default scores and must be explicitly configured in `config.yaml`.
@@ -86,6 +86,22 @@ Evaluates each declared dependency and exits with the worst-case code across the
 osspolicyguard version                        # print the installed version and exit 0
 osspolicyguard scan express --log-level DEBUG # DEBUG/INFO/WARNING/ERROR; secrets are redacted
 ```
+
+### License compliance
+
+```bash
+osspolicyguard license requests --license MIT --format json
+osspolicyguard license some-lib --license GPL-3.0-only --project-license permissive  # -> PROHIBITED
+osspolicyguard license --batch deps.json --format markdown   # deps.json: [{"package_name", "license"}]
+osspolicyguard license --batch deps.json --notice             # aggregated NOTICE file text
+```
+
+Normalizes a declared license string to SPDX, classifies its copyleft strength (none/weak/strong),
+flags dual-license or commercial-restriction terms (Commons Clause, SSPL, BUSL, non-commercial-use,
+etc.), and checks it against a configurable compatibility policy (`--project-license`, or a custom
+policy via `--policy-file <json>`). Exits 1 if any package is PROHIBITED, 2 on REVIEW with
+`--review-fails-ci`. This subcommand is standalone — it does not require `config.yaml` — and is not
+yet wired into `scan`/`manifest`'s own output (see `requirements.md` §15.1).
 
 ### GitHub Actions
 

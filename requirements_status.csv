@@ -8,3 +8,4 @@ REQ-020,Package scan command,Done,scan and manifest (OPG-068) subcommands implem
 REQ-021,Exit-code contract,Done,Decision/exit-code matrix implemented and verified,tests/test_cli.py,2026-08-06
 REQ-022,Versioned JSON schema,Done,Schema version, schema file, and JSON schema validation tests completed,tests/test_reports.py,2026-08-06
 REQ-030,Provider interface and resilience,Done,All six typed providers (GitHub Scorecard NVD OSV EPSS Registry) implemented against ProviderBase/ProviderResponse with unit tests; not yet wired into OSSScorer (tracked under REQ-010),src/osspolicyguard/providers/,2026-08-29
+REQ-040,License compliance (OPG-133..138),Done,SPDX normalization copyleft classification commercial-restriction detection configurable compatibility policy JSON/Markdown report and NOTICE generation; osspolicyguard license subcommand; OPG-133 registry auto-detection not yet wired into scan/manifest,src/osspolicyguard/license_compliance.py,2026-08-29

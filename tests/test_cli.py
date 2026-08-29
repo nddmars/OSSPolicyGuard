@@ -327,3 +327,68 @@ def test_scan_manifest_missing_manifest_returns_exit_3(tmp_path, monkeypatch, ca
     monkeypatch.chdir(tmp_path)
     exit_code = cli.main(["manifest"])
     assert exit_code == 3
+
+
+# ---------------------------------------------------------------------------
+# license subcommand (requirements.md §15, OPG-133..138)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_license_single_package_pass(capsys):
+    exit_code = cli.main(["license", "requests", "--license", "MIT", "--format", "json"])
+    assert exit_code == 0
+    body = json.loads(capsys.readouterr().out)
+    assert body["summary"] == {"PASS": 1, "REVIEW": 0, "PROHIBITED": 0}
+    assert body["packages"][0]["package_name"] == "requests"
+
+
+def test_cli_license_strong_copyleft_prohibited(capsys):
+    exit_code = cli.main(["license", "gpl-lib", "--license", "GPL-3.0-only"])
+    assert exit_code == 1
+    output = capsys.readouterr().out
+    assert "PROHIBITED" in output
+
+
+def test_cli_license_review_fails_ci(capsys):
+    exit_code = cli.main(["license", "mpl-lib", "--license", "MPL-2.0", "--review-fails-ci"])
+    assert exit_code == 2
+
+
+def test_cli_license_batch_mode(tmp_path, capsys):
+    batch_file = tmp_path / "deps.json"
+    batch_file.write_text(
+        json.dumps(
+            [
+                {"package_name": "requests", "license": "Apache-2.0"},
+                {"package_name": "flask", "license": "BSD-3-Clause"},
+            ]
+        )
+    )
+    exit_code = cli.main(["license", "--batch", str(batch_file), "--format", "json"])
+    assert exit_code == 0
+    body = json.loads(capsys.readouterr().out)
+    assert len(body["packages"]) == 2
+
+
+def test_cli_license_notice_mode(capsys):
+    exit_code = cli.main(["license", "requests", "--license", "Apache-2.0", "--notice"])
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "NOTICE" in output
+    assert "requests (Apache-2.0)" in output
+
+
+def test_cli_license_missing_input_returns_exit_3(capsys):
+    exit_code = cli.main(["license"])
+    assert exit_code == 3
+
+
+def test_cli_license_custom_policy_file(tmp_path, capsys):
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text(
+        json.dumps({"permissive": {"allow": [], "review": [], "deny": ["permissive"]}})
+    )
+    exit_code = cli.main(
+        ["license", "requests", "--license", "MIT", "--policy-file", str(policy_file)]
+    )
+    assert exit_code == 1

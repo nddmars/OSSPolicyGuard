@@ -268,6 +268,90 @@ def scan_manifest(
     return worst_exit
 
 
+def scan_license(
+    package_name: str | None = None,
+    license_text: str | None = None,
+    batch_path: str | None = None,
+    project_license: str = "permissive",
+    policy_path: str | None = None,
+    fmt: str = "text",
+    notice: bool = False,
+    review_fails_ci: bool = False,
+) -> int:
+    """License compliance check for one package or a batch file (requirements.md §15).
+
+    Single-package mode takes --license directly; batch mode reads a JSON
+    file of ``[{"package_name": ..., "license": ..., "copyright": ...}, ...]``
+    entries (e.g. produced by a registry-metadata export). --notice switches
+    the output to an aggregated NOTICE file (OPG-138) instead of a
+    compliance report (OPG-137).
+    """
+    from .license_compliance import (
+        DEFAULT_COMPATIBILITY_POLICY,
+        build_license_report,
+        evaluate_license,
+        generate_notice,
+        to_license_markdown,
+    )
+
+    policy = DEFAULT_COMPATIBILITY_POLICY
+    if policy_path:
+        try:
+            with open(policy_path, encoding="utf-8") as fh:
+                policy = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print(f"Failed to load policy file {policy_path!r}: {exc}", file=sys.stderr)
+            return 3
+
+    entries: list[dict[str, Any]]
+    if batch_path:
+        try:
+            with open(batch_path, encoding="utf-8") as fh:
+                entries = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print(f"Failed to load batch file {batch_path!r}: {exc}", file=sys.stderr)
+            return 3
+    elif package_name:
+        entries = [{"package_name": package_name, "license": license_text}]
+    else:
+        print("Provide a package name with --license, or --batch <file.json>.", file=sys.stderr)
+        return 3
+
+    if notice:
+        print(generate_notice(entries))
+        return 0
+
+    findings = [
+        evaluate_license(
+            entry.get("package_name", "unknown"),
+            entry.get("license"),
+            project_license,
+            policy=policy,
+        )
+        for entry in entries
+    ]
+
+    if fmt == "json":
+        print(json.dumps(build_license_report(findings), indent=2))
+    elif fmt == "markdown":
+        print(to_license_markdown(findings))
+    else:
+        for finding in findings:
+            license_display = (
+                ", ".join(finding.spdx_ids)
+                if finding.spdx_ids
+                else (finding.raw_license or "unknown")
+            )
+            print(f"{finding.package_name}: {license_display} -> {finding.verdict}")
+            print(f"  {finding.reason}")
+
+    if any(f.verdict == "PROHIBITED" for f in findings):
+        return 1
+    if review_fails_ci and any(f.verdict == "REVIEW" for f in findings):
+        return 2
+    return 0
+
+
 def _get_version() -> str:
     try:
         import importlib.metadata
@@ -356,6 +440,49 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Treat any REVIEW decision as a CI failure (exit code 2).",
     )
 
+    # license subcommand  (requirements.md §15, OPG-133..138)
+    license_parser = subparsers.add_parser(
+        "license", help="Check a package's declared license for compliance."
+    )
+    license_parser.add_argument(
+        "package", nargs="?", help="Package name (used with --license for single-package mode)."
+    )
+    license_parser.add_argument(
+        "--license", dest="license_text", help="The package's declared license string."
+    )
+    license_parser.add_argument(
+        "--batch",
+        dest="batch_path",
+        help='JSON file of [{"package_name": ..., "license": ..., "copyright": ...}, ...].',
+    )
+    license_parser.add_argument(
+        "--project-license",
+        choices=["permissive", "weak-copyleft", "strong-copyleft", "unrestricted"],
+        default="permissive",
+        help="This project's own license category, used to select the compatibility policy.",
+    )
+    license_parser.add_argument(
+        "--policy-file",
+        dest="policy_path",
+        help="JSON file overriding the default compatibility policy (custom allow/review/deny rules).",
+    )
+    license_parser.add_argument(
+        "--format",
+        choices=["text", "json", "markdown"],
+        default="text",
+        help="Output format: text, json, markdown (default: text).",
+    )
+    license_parser.add_argument(
+        "--notice",
+        action="store_true",
+        help="Emit an aggregated NOTICE file instead of a compliance report (OPG-138).",
+    )
+    license_parser.add_argument(
+        "--review-fails-ci",
+        action="store_true",
+        help="Treat any REVIEW verdict as a CI failure (exit code 2).",
+    )
+
     return parser
 
 
@@ -390,6 +517,18 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 ecosystem=args.ecosystem,
                 criticality=args.criticality,
                 fmt=args.format,
+                review_fails_ci=args.review_fails_ci,
+            )
+
+        if args.command == "license":
+            return scan_license(
+                package_name=args.package,
+                license_text=args.license_text,
+                batch_path=args.batch_path,
+                project_license=args.project_license,
+                policy_path=args.policy_path,
+                fmt=args.format,
+                notice=args.notice,
                 review_fails_ci=args.review_fails_ci,
             )
 

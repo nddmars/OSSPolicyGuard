@@ -32,6 +32,7 @@ src/osspolicyguard/
   logging_config.py            # configure_logging(); RedactingFilter scrubs secrets from logs
   exceptions.py                # OSSPolicyGuardError hierarchy
   policy.py                    # PolicyBundle (next-gen; not yet wired into OSSScorer)
+  license_compliance.py        # SPDX normalization, copyleft, compatibility policy, NOTICE (§15)
   providers/                   # Next-gen typed providers (implemented; not yet wired into OSSScorer)
     __init__.py                # ProviderBase ABC, ProviderResponse, ProviderStatus, NullProvider
     github_provider.py         # GitHubProvider
@@ -56,6 +57,7 @@ tests/
   test_next_gen_providers.py   # src/osspolicyguard/providers/ typed provider tests
   test_new_modules.py          # Stub module tests
   test_action_script.py        # GitHub Action script tests
+  test_license_compliance.py   # license_compliance.py unit tests
   golden/small_result.json     # Golden fixture for report tests
 
 scripts/
@@ -238,7 +240,7 @@ result under `result["compliance"]["geo_jurisdiction"]` with `affects_technical_
 ## Running tests
 
 ```bash
-python -m pytest tests/ -q          # 282 tests, all must pass
+python -m pytest tests/ -q          # 328 tests, all must pass
 python -m pytest tests/test_cli.py  # CLI tests only
 python -m pytest tests/test_round3_fixes.py  # Provider-safety regression suite
 

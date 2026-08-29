@@ -293,12 +293,14 @@ requirement are listed with their OPG ID.
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
-| 15.1 | SPDX license detection (OPG-133) | ❌ | Identify declared license from registry metadata and package files; parse SPDX expressions; store canonical SPDX identifier per package |
-| 15.2 | Copyleft propagation analysis (OPG-134) | ❌ | Flag GPL-2/3, LGPL, AGPL, MPL, EPL; determine strong/weak copyleft applicability based on link type |
-| 15.3 | License compatibility matrix (OPG-135) | ❌ | Configurable compatibility matrix; flag incompatible combinations in the dependency graph; custom allow/deny rules |
-| 15.4 | Dual-license and commercial restriction detection (OPG-136) | ❌ | Detect dual-licensed packages with commercial fees or non-commercial-use clauses; surface as REVIEW finding |
-| 15.5 | License compliance report (OPG-137) | ❌ | Machine-readable report per component: license, compatibility verdict, applicable policy rule; JSON and Markdown outputs |
-| 15.6 | Attribution / NOTICE file generation (OPG-138) | ❌ | Aggregate copyright notices and license texts for all direct and transitive dependencies; suitable for distribution bundles |
+| 15.1 | SPDX license detection (OPG-133) | ⚠️ | `normalize_license()`/`parse_spdx_expression()` in `src/osspolicyguard/license_compliance.py` map ~50 common free-form registry strings (and compound `A OR B` expressions) to canonical SPDX identifiers. Not yet wired to auto-fetch a package's declared license from registry metadata — callers (CLI `license` subcommand, or a future `scan` integration) supply the raw license string themselves |
+| 15.2 | Copyleft propagation analysis (OPG-134) | ✅ | `classify_copyleft()` flags GPL-2.0/3.0, AGPL-3.0 as strong; LGPL-2.1/3.0, MPL-2.0, EPL-1.0/2.0 as weak |
+| 15.3 | License compatibility matrix (OPG-135) | ✅ | `DEFAULT_COMPATIBILITY_POLICY` (4 project-license categories × allow/review/deny dependency categories); override wholesale via `osspolicyguard license --policy-file <json>` for custom allow/deny rules |
+| 15.4 | Dual-license and commercial restriction detection (OPG-136) | ✅ | `detect_commercial_restriction()` matches Commons Clause, BUSL, SSPL, Elastic License, non-commercial-use phrasing, etc.; always evaluates to a `PROHIBITED` category regardless of project policy |
+| 15.5 | License compliance report (OPG-137) | ✅ | `build_license_report()` (JSON) / `to_license_markdown()`; `osspolicyguard license <pkg> --license <spdx> --format json\|markdown\|text`, plus `--batch <file.json>` for multiple packages at once |
+| 15.6 | Attribution / NOTICE file generation (OPG-138) | ✅ | `generate_notice()`; `osspolicyguard license --batch <file.json> --notice` |
+
+License compliance is implemented as a standalone module (`license_compliance.py`) and CLI subcommand (`osspolicyguard license`), independent of `OSSConfig`/`config.yaml` so it works without a full scan configuration. It is not yet integrated into `scan`/`manifest`'s own output — see 15.1.
 
 ---
 
@@ -402,4 +404,6 @@ requirement are listed with their OPG ID.
 
 *Last updated: 2026-08-29 — manifest subcommand (OPG-068) implemented; six typed next-gen
 providers (§3) implemented against the `ProviderBase` contract; CI now gates on ruff/black/mypy;
-282 tests passing.*
+GitHub-URL parsing unified across both provider layers (REQ-010, fixing a netloc-spoofing bug in
+the typed provider); license compliance engine and `osspolicyguard license` subcommand
+implemented (§15, OPG-134/135/136/137/138 done, OPG-133 partial — see 15.1); 328 tests passing.*
