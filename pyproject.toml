@@ -17,6 +17,7 @@ dependencies = [
   "matplotlib>=3.8",
   "ipython>=8.0",
   "ipywidgets>=8.0",
+  "license-expression>=30.4",
 ]
 
 [project.optional-dependencies]

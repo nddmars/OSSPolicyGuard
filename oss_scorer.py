@@ -1009,7 +1009,9 @@ class OSSScorer:
 
         return None
 
-    def check_osv(self, package_name: str, ecosystem: str = "npm") -> dict:
+    def check_osv(
+        self, package_name: str, ecosystem: str = "npm", version: str | None = None
+    ) -> dict:
         """Query OSV.dev for known vulnerabilities and malicious package flags.
 
         OSV aggregates advisories from NVD, GitHub Security Advisories (GHSA),
@@ -1053,9 +1055,12 @@ class OSSScorer:
 
         timeout = self.config.get("osv", {}).get("timeout", 10)
         try:
+            package_query = {"name": package_name, "ecosystem": osv_ecosystem}
+            if version:
+                package_query["version"] = version
             resp = requests.post(
                 "https://api.osv.dev/v1/query",
-                json={"package": {"name": package_name, "ecosystem": osv_ecosystem}},
+                json={"package": package_query},
                 timeout=timeout,
             )
             if resp.status_code != 200:
@@ -1549,7 +1554,9 @@ class OSSWorkflow:
 
             # Vulnerability + malicious-package check via OSV / ossf/malicious-packages
             if ecosystem:
-                osv_data = self.scorer.check_osv(component_data["package_name"], ecosystem)
+                osv_data = self.scorer.check_osv(
+                    component_data["package_name"], ecosystem, component_data.get("version")
+                )
                 results["osv_data"] = osv_data
             else:
                 logger.info(

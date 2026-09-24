@@ -262,7 +262,11 @@ def test_parse_manifest_dependencies_requirements_txt(tmp_path):
     manifest = tmp_path / "requirements.txt"
     manifest.write_text("# comment\nrequests>=2.31\nPyYAML==6.0  # inline comment\n\npandas\n")
     deps = cli.parse_manifest_dependencies(str(manifest))
-    assert deps == ["requests", "PyYAML", "pandas"]
+    assert deps == [
+        {"name": "requests", "specifier": ">=2.31", "version": None},
+        {"name": "PyYAML", "specifier": "==6.0", "version": "6.0"},
+        {"name": "pandas", "specifier": None, "version": None},
+    ]
 
 
 def test_parse_manifest_dependencies_package_json(tmp_path):
@@ -271,7 +275,21 @@ def test_parse_manifest_dependencies_package_json(tmp_path):
         json.dumps({"dependencies": {"express": "^4.0.0"}, "devDependencies": {"jest": "^29.0.0"}})
     )
     deps = cli.parse_manifest_dependencies(str(manifest))
-    assert deps == ["express", "jest"]
+    assert deps == [
+        {"name": "express", "specifier": "^4.0.0", "version": None},
+        {"name": "jest", "specifier": "^29.0.0", "version": None},
+    ]
+
+
+def test_parse_manifest_dependencies_prefers_npm_lockfile(tmp_path):
+    manifest = tmp_path / "package.json"
+    manifest.write_text(json.dumps({"dependencies": {"express": "^4.0.0"}}))
+    (tmp_path / "package-lock.json").write_text(
+        json.dumps({"packages": {"node_modules/express": {"version": "4.18.2"}}})
+    )
+    assert cli.parse_manifest_dependencies(str(manifest)) == [
+        {"name": "express", "specifier": "^4.0.0", "version": "4.18.2"}
+    ]
 
 
 def test_detect_manifest_explicit_path():

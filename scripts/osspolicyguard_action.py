@@ -8,39 +8,48 @@ from pathlib import Path
 from typing import Any
 
 
-def parse_manifest_dependencies(manifest_path: str) -> list[str]:
+def parse_manifest_dependencies(manifest_path: str) -> list[dict[str, str | None]]:
     path = Path(manifest_path)
     if path.suffix == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
         deps = []
         for section in ("dependencies", "devDependencies"):
-            deps.extend(data.get(section, {}).keys())
-        return sorted(set(deps))
+            for name, specifier in data.get(section, {}).items():
+                deps.append({"name": name, "specifier": str(specifier), "version": None})
+        return sorted(deps, key=lambda dependency: str(dependency["name"]))
 
-    deps: list[str] = []
+    deps: list[dict[str, str | None]] = []
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.split("#", 1)[0].strip()
         if not line:
             continue
         match = re.match(r"^([A-Za-z0-9_.-]+)", line)
         if match:
-            deps.append(match.group(1))
+            name = match.group(1)
+            specifier = line[len(name) :].strip() or None
+            version = None
+            if specifier and re.fullmatch(r"\s*(?:==|=)?\s*(\d+(?:\.\d+){1,3})\s*", specifier):
+                version = re.fullmatch(r"\s*(?:==|=)?\s*(\d+(?:\.\d+){1,3})\s*", specifier).group(1)
+            deps.append({"name": name, "specifier": specifier, "version": version})
     return deps
 
 
-def run_scan(package_name: str, ecosystem: str) -> dict[str, Any]:
+def run_scan(package_name: str, ecosystem: str, version: str | None = None) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        "-m",
+        "osspolicyguard.cli",
+        "scan",
+        package_name,
+        "--ecosystem",
+        ecosystem,
+        "--format",
+        "json",
+    ]
+    if version:
+        command.extend(["--package-version", version])
     result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "osspolicyguard.cli",
-            "scan",
-            package_name,
-            "--ecosystem",
-            ecosystem,
-            "--format",
-            "json",
-        ],
+        command,
         capture_output=True,
         text=True,
         check=False,
@@ -60,8 +69,8 @@ def main() -> int:
         raise SystemExit("No supported manifest found")
 
     deps = parse_manifest_dependencies(str(manifest_path))
-    for package_name in deps:
-        report = run_scan(package_name, ecosystem)
+    for dependency in deps:
+        report = run_scan(dependency["name"], ecosystem, dependency["version"])
         print(json.dumps(report, indent=2))
 
     return 0

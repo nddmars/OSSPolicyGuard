@@ -84,7 +84,7 @@ Evaluates each declared dependency and exits with the worst-case code across the
 
 ```bash
 osspolicyguard version                        # print the installed version and exit 0
-osspolicyguard scan express --log-level DEBUG # DEBUG/INFO/WARNING/ERROR; secrets are redacted
+osspolicyguard --log-level DEBUG scan express # DEBUG/INFO/WARNING/ERROR; secrets are redacted
 ```
 
 ### License compliance

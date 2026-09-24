@@ -59,7 +59,15 @@ class TestIsFloating:
         assert is_floating("1.2.3") is False
 
     def test_caret_tilde_wildcard_latest_range_are_floating(self):
-        for spec in ("^1.2.3", "~1.2.3", "*", "latest", ">=1.2.3,<2.0.0", None):
+        for spec in (
+            "^1.2.3",
+            "~1.2.3",
+            "~=1.2.3",
+            "*",
+            "latest",
+            ">=1.2.3,<2.0.0",
+            None,
+        ):
             assert is_floating(spec) is True
 
 
@@ -76,6 +84,11 @@ class TestEvaluatePinning:
     def test_caret_prohibited_when_deny_floating(self):
         policy = {"allowed_styles": ["exact"], "deny_floating": True}
         finding = evaluate_pinning("express", "^4.18.0", policy=policy)
+        assert finding.verdict == "PROHIBITED"
+
+    def test_compatible_prohibited_when_deny_floating(self):
+        policy = {"allowed_styles": ["exact"], "deny_floating": True}
+        finding = evaluate_pinning("requests", "~=1.2.3", policy=policy)
         assert finding.verdict == "PROHIBITED"
 
     def test_custom_allowed_styles(self):

@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from license_expression import LicenseSymbol, LicenseWithExceptionSymbol, get_spdx_licensing
+
 # ---------------------------------------------------------------------------
 # OPG-133: SPDX license detection
 # ---------------------------------------------------------------------------
@@ -73,30 +75,7 @@ _ALIASES: dict[str, str] = {
     "boost software license 1.0": "BSL-1.0",
 }
 
-# Prefixes that identify a string as already being (or closely resembling)
-# a valid SPDX identifier, so it is trusted verbatim rather than requiring
-# an exact alias match.
-_SPDX_LIKE_PREFIXES = (
-    "MIT",
-    "BSD",
-    "APACHE",
-    "GPL",
-    "LGPL",
-    "AGPL",
-    "MPL",
-    "EPL",
-    "ISC",
-    "CC0",
-    "CC-BY",
-    "UNLICENSE",
-    "PSF",
-    "WTFPL",
-    "ZLIB",
-    "BSL",
-    "0BSD",
-)
-
-_SPDX_EXPRESSION_OPERATORS = re.compile(r"\s+(AND|OR|WITH)\s+", re.IGNORECASE)
+_SPDX_LICENSING = get_spdx_licensing()
 
 
 def normalize_license(raw: str | None) -> str | None:
@@ -111,10 +90,13 @@ def normalize_license(raw: str | None) -> str | None:
     key = cleaned.lower()
     if key in _ALIASES:
         return _ALIASES[key]
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+-]*", cleaned) and any(
-        cleaned.upper().startswith(prefix) for prefix in _SPDX_LIKE_PREFIXES
-    ):
-        return cleaned
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+-]*", cleaned):
+        try:
+            parsed = _SPDX_LICENSING.parse(cleaned, validate=True)
+        except Exception:
+            return None
+        if isinstance(parsed, LicenseSymbol) and not parsed.is_exception:
+            return parsed.key
     return None
 
 
@@ -124,12 +106,23 @@ def parse_spdx_expression(expression: str) -> list[str]:
     declare more than one SPDX id)."""
     if not expression:
         return []
-    parts = _SPDX_EXPRESSION_OPERATORS.split(expression.strip())
-    return [
-        p.strip().strip("()")
-        for p in parts
-        if p.strip() and p.strip().upper() not in ("AND", "OR", "WITH")
-    ]
+    try:
+        parsed = _SPDX_LICENSING.parse(expression.strip(), validate=True)
+    except Exception:
+        normalized = normalize_license(expression)
+        return [normalized] if normalized else []
+    return _expression_ids(parsed)
+
+
+def _expression_ids(expression: Any) -> list[str]:
+    if isinstance(expression, LicenseWithExceptionSymbol):
+        return [expression.render()]
+    if isinstance(expression, LicenseSymbol):
+        return [expression.key]
+    ids: list[str] = []
+    for argument in getattr(expression, "args", ()):
+        ids.extend(_expression_ids(argument))
+    return ids
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +223,73 @@ def categorize_license(spdx_id: str | None, is_commercial_restricted: bool) -> s
     return "permissive"
 
 
+def _validate_policy(
+    policy: dict[str, dict[str, list[str]]], project_license_category: str
+) -> None:
+    if not isinstance(policy, dict) or project_license_category not in policy:
+        raise ValueError(f"Policy is missing project category {project_license_category!r}")
+    rules = policy[project_license_category]
+    if not isinstance(rules, dict):
+        raise ValueError(f"Policy category {project_license_category!r} must be an object")
+    for key in ("allow", "review", "deny"):
+        if not isinstance(rules.get(key), list) or not all(
+            isinstance(category, str) for category in rules[key]
+        ):
+            raise ValueError(
+                f"Policy category {project_license_category!r} must define a string list for {key!r}"
+            )
+
+
+def _license_outcome(
+    expression: Any,
+    project_rules: dict[str, list[str]],
+    project_license_category: str,
+) -> tuple[str, str, str]:
+    """Evaluate a parsed SPDX AST while preserving boolean semantics."""
+    if isinstance(expression, LicenseWithExceptionSymbol):
+        verdict, category, reason = _license_outcome(
+            expression.license_symbol, project_rules, project_license_category
+        )
+        return verdict, category, f"{reason}; exception {expression.exception_symbol.key!r} applies"
+
+    if isinstance(expression, LicenseSymbol):
+        category = categorize_license(expression.key, False)
+        if category in project_rules["deny"]:
+            return (
+                "PROHIBITED",
+                category,
+                f"{category} license is denied under the {project_license_category!r} project policy",
+            )
+        if category in project_rules["review"]:
+            return (
+                "REVIEW",
+                category,
+                f"{category} license requires manual review under the {project_license_category!r} project policy",
+            )
+        if category in project_rules["allow"]:
+            return (
+                "PASS",
+                category,
+                f"{category} license is allowed under the {project_license_category!r} project policy",
+            )
+        return (
+            "REVIEW",
+            category,
+            f"{category} license is not explicitly allowed under the {project_license_category!r} project policy",
+        )
+
+    outcomes = [
+        _license_outcome(argument, project_rules, project_license_category)
+        for argument in expression.args
+    ]
+    ranks = {"PASS": 0, "REVIEW": 1, "PROHIBITED": 2}
+    if expression.__class__.__name__ == "AND":
+        selected = max(outcomes, key=lambda outcome: ranks[outcome[0]])
+        return selected[0], selected[1], f"AND expression: {selected[2]}"
+    selected = min(outcomes, key=lambda outcome: ranks[outcome[0]])
+    return selected[0], selected[1], f"OR expression selected a compatible branch: {selected[2]}"
+
+
 @dataclass
 class LicenseFinding:
     """One dependency's license-compliance evaluation (OPG-137 report row)."""
@@ -268,46 +328,45 @@ def evaluate_license(
     OPG-136 (commercial-restriction detection), and OPG-135 (the
     compatibility-policy verdict) into a single typed finding.
     """
-    policy = policy or DEFAULT_COMPATIBILITY_POLICY
+    policy = DEFAULT_COMPATIBILITY_POLICY if policy is None else policy
+    _validate_policy(policy, project_license_category)
     commercial_marker = detect_commercial_restriction(raw_license)
-
-    spdx_ids = [
-        normalized
-        for part in parse_spdx_expression(raw_license or "")
-        if (normalized := normalize_license(part))
-    ]
-    if not spdx_ids:
-        single = normalize_license(raw_license)
-        if single:
-            spdx_ids = [single]
-
-    # A compound "MIT OR Apache-2.0" expression lets a consumer choose either
-    # branch; a conservative default still evaluates the first (typically
-    # most-restrictive-declared) branch for the verdict.
-    primary = spdx_ids[0] if spdx_ids else None
-    category = categorize_license(primary, commercial_marker is not None)
 
     project_rules = policy.get(project_license_category, DEFAULT_COMPATIBILITY_POLICY["permissive"])
 
-    if category == "unknown":
+    parsed = None
+    if raw_license and raw_license.strip():
+        try:
+            parsed = _SPDX_LICENSING.parse(raw_license.strip(), validate=True)
+        except Exception:
+            pass
+
+    if parsed is None:
+        spdx_ids = []
+        category = "unknown"
         verdict = "REVIEW"
-        reason = f"Could not determine an SPDX license from {raw_license!r}"
-    elif category in project_rules.get("deny", []):
-        verdict = "PROHIBITED"
-        reason = (
-            f"{category} license is denied under the {project_license_category!r} project policy"
-        )
-    elif category in project_rules.get("review", []):
-        verdict = "REVIEW"
-        reason = f"{category} license requires manual review under the {project_license_category!r} project policy"
+        reason = f"Could not determine a valid SPDX expression from {raw_license!r}"
+        single = normalize_license(raw_license)
+        if single:
+            spdx_ids = [single]
+            category = categorize_license(single, False)
+            verdict, category, reason = _license_outcome(
+                _SPDX_LICENSING.parse(single, validate=True),
+                project_rules,
+                project_license_category,
+            )
     else:
-        verdict = "PASS"
-        reason = (
-            f"{category} license is allowed under the {project_license_category!r} project policy"
+        spdx_ids = _expression_ids(parsed)
+        verdict, category, reason = _license_outcome(
+            parsed, project_rules, project_license_category
         )
 
     if commercial_marker:
-        reason = f"Detected commercial/dual-license restriction ({commercial_marker!r}); {reason}"
+        verdict = "PROHIBITED"
+        category = "commercial-restricted"
+        reason = f"Detected commercial/dual-license restriction ({commercial_marker!r})"
+
+    primary = spdx_ids[0] if spdx_ids else None
 
     return LicenseFinding(
         package_name=package_name,

@@ -36,6 +36,8 @@ def scan_package(
     criticality: str = "Non-Critical",
     repo_url: str | None = None,
     review_fails_ci: bool = False,
+    version: str | None = None,
+    declared_specifier: str | None = None,
 ) -> dict[str, Any]:
     """Create a simple machine-readable evaluation payload for a package."""
     from oss_scorer import OSSScorer, OSSWorkflow
@@ -49,6 +51,8 @@ def scan_package(
         "ecosystem": ecosystem or "npm",
         "criticality": _normalize_criticality(criticality),
     }
+    if version:
+        component["version"] = version
     if repo_url:
         component["repo_url"] = repo_url
 
@@ -68,6 +72,11 @@ def scan_package(
     # Seed warnings from evaluate_component() so provider-failure notices are
     # always present even if EvaluationResult.from_legacy() later raises.
     warnings: list[str] = list(result.get("warnings", []))
+    if declared_specifier and not version:
+        warnings.append(
+            f"Unresolved dependency range for {package_name}: {declared_specifier!r}; "
+            "OSV was queried without an exact version"
+        )
 
     # Build evidence from the legacy scorer result.  from_legacy() re-reads
     # result["warnings"] so _eval.warnings already contains the provider warnings;
@@ -96,7 +105,8 @@ def scan_package(
         "package": {
             "name": package_name,
             "ecosystem": ecosystem or "npm",
-            "version": None,
+            "version": version,
+            "declared_specifier": declared_specifier,
         },
         "decision": decision,
         "score": round(float(result.get("total_score", 0)), 1),
@@ -109,6 +119,7 @@ def scan_package(
         "findings": findings,
         "evidence": evidence,
         "warnings": warnings,
+        "declared_specifier": declared_specifier,
         "malicious_package_detected": bool(result.get("osv_data", {}).get("is_malicious", False)),
         "enforcement": enforcement,
         # Expose safety fields added by evaluate_component() so JSON consumers
@@ -159,8 +170,8 @@ def _sarif_stub(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def parse_manifest_dependencies(manifest_path: str) -> list[str]:
-    """Extract dependency package names from a package.json or requirements.txt file.
+def parse_manifest_dependencies(manifest_path: str) -> list[dict[str, str | None]]:
+    """Extract dependency names, declared specifiers, and resolved versions.
 
     OPG-068: manifest / multi-package batch evaluation. Mirrors the parsing
     logic in scripts/osspolicyguard_action.py so both entry points agree on
@@ -173,10 +184,33 @@ def parse_manifest_dependencies(manifest_path: str) -> list[str]:
     path = _Path(manifest_path)
     if path.suffix == ".json":
         data = _json.loads(path.read_text(encoding="utf-8"))
-        deps: list[str] = []
+        lock_versions: dict[str, str] = {}
+        for lock_name in ("package-lock.json", "npm-shrinkwrap.json"):
+            lock_path = path.with_name(lock_name)
+            if not lock_path.exists():
+                continue
+            lock_data = _json.loads(lock_path.read_text(encoding="utf-8"))
+            for package_path, metadata in lock_data.get("packages", {}).items():
+                if package_path.startswith("node_modules/") and isinstance(metadata, dict):
+                    lock_versions[package_path.split("node_modules/", 1)[1]] = metadata.get(
+                        "version", ""
+                    )
+            for name, metadata in lock_data.get("dependencies", {}).items():
+                if isinstance(metadata, dict) and metadata.get("version"):
+                    lock_versions.setdefault(name, metadata["version"])
+
+        deps: list[dict[str, str | None]] = []
         for section in ("dependencies", "devDependencies"):
-            deps.extend(data.get(section, {}).keys())
-        return sorted(set(deps))
+            for name, specifier in data.get(section, {}).items():
+                exact = lock_versions.get(name) or _exact_version(specifier)
+                deps.append(
+                    {
+                        "name": name,
+                        "specifier": str(specifier),
+                        "version": exact,
+                    }
+                )
+        return sorted(deps, key=lambda dependency: str(dependency["name"]))
 
     deps = []
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -185,8 +219,23 @@ def parse_manifest_dependencies(manifest_path: str) -> list[str]:
             continue
         match = _re.match(r"^([A-Za-z0-9_.-]+)", line)
         if match:
-            deps.append(match.group(1))
+            name = match.group(1)
+            specifier = line[len(name) :].strip() or None
+            deps.append(
+                {
+                    "name": name,
+                    "specifier": specifier,
+                    "version": _exact_version(specifier),
+                }
+            )
     return deps
+
+
+def _exact_version(specifier: Any) -> str | None:
+    if not isinstance(specifier, str):
+        return None
+    match = __import__("re").fullmatch(r"\s*(?:==|=)?\s*(\d+(?:\.\d+){1,3})\s*", specifier)
+    return match.group(1) if match else None
 
 
 def _detect_manifest(explicit_path: str | None) -> tuple[str, str]:
@@ -233,12 +282,14 @@ def scan_manifest(
 
     results = [
         scan_package(
-            package_name=package_name,
+            package_name=str(dependency["name"]),
             ecosystem=eco,
             criticality=criticality,
             review_fails_ci=review_fails_ci,
+            version=dependency["version"],
+            declared_specifier=dependency["specifier"],
         )
-        for package_name in packages
+        for dependency in packages
     ]
 
     if fmt == "json":
@@ -321,15 +372,19 @@ def scan_license(
         print(generate_notice(entries))
         return 0
 
-    findings = [
-        evaluate_license(
-            entry.get("package_name", "unknown"),
-            entry.get("license"),
-            project_license,
-            policy=policy,
-        )
-        for entry in entries
-    ]
+    try:
+        findings = [
+            evaluate_license(
+                entry.get("package_name", "unknown"),
+                entry.get("license"),
+                project_license,
+                policy=policy,
+            )
+            for entry in entries
+        ]
+    except (TypeError, ValueError) as exc:
+        print(f"Invalid license policy: {exc}", file=sys.stderr)
+        return 3
 
     if fmt == "json":
         print(json.dumps(build_license_report(findings), indent=2))
@@ -558,6 +613,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Business criticality level.",
     )
     scan_parser.add_argument("--repo-url", help="Source repository URL.")
+    scan_parser.add_argument(
+        "--package-version", dest="package_version", help="Exact package version to scan."
+    )
     scan_parser.add_argument(
         "--format",
         choices=["text", "json", "sarif", "markdown"],
@@ -797,13 +855,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
             parser.print_help()
             return 0
 
-        result = scan_package(
-            package_name=args.package,
-            ecosystem=args.ecosystem,
-            criticality=args.criticality,
-            repo_url=args.repo_url,
-            review_fails_ci=args.review_fails_ci,
-        )
+        scan_kwargs: dict[str, Any] = {
+            "package_name": args.package,
+            "ecosystem": args.ecosystem,
+            "criticality": args.criticality,
+            "repo_url": args.repo_url,
+            "review_fails_ci": args.review_fails_ci,
+        }
+        if args.package_version:
+            scan_kwargs["version"] = args.package_version
+        result = scan_package(**scan_kwargs)
 
         fmt: str = args.format
         if fmt == "json":

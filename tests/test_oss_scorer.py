@@ -1273,6 +1273,17 @@ def _osv_response(*advisories):
 
 class TestCheckOsv:
     @patch("oss_scorer.requests.post")
+    def test_exact_version_is_sent_to_osv(self, mock_post):
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {"vulns": []}
+
+        _make_scorer().check_osv("requests", "pypi", "2.31.0")
+
+        assert mock_post.call_args.kwargs["json"] == {
+            "package": {"name": "requests", "ecosystem": "PyPI", "version": "2.31.0"}
+        }
+
+    @patch("oss_scorer.requests.post")
     def test_clean_package_returns_empty(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = {"vulns": []}

@@ -19,7 +19,16 @@ from typing import Any
 # Version-specifier classification
 # ---------------------------------------------------------------------------
 
-_FLOATING_STYLES = {"caret", "tilde", "wildcard", "latest", "range", "unbounded", "empty"}
+_FLOATING_STYLES = {
+    "caret",
+    "tilde",
+    "compatible",
+    "wildcard",
+    "latest",
+    "range",
+    "unbounded",
+    "empty",
+}
 
 
 def classify_specifier(specifier: str | None) -> str:

@@ -15,7 +15,10 @@ def test_parse_requirements_file(tmp_path):
 
     deps = module.parse_manifest_dependencies(str(manifest))
 
-    assert deps == ["requests", "pytest"]
+    assert deps == [
+        {"name": "requests", "specifier": ">=2", "version": None},
+        {"name": "pytest", "specifier": None, "version": None},
+    ]
 
 
 def test_parse_package_json(tmp_path):
@@ -27,4 +30,7 @@ def test_parse_package_json(tmp_path):
 
     deps = module.parse_manifest_dependencies(str(manifest))
 
-    assert deps == ["react", "vitest"]
+    assert deps == [
+        {"name": "react", "specifier": "^18.0.0", "version": None},
+        {"name": "vitest", "specifier": "^1.0.0", "version": None},
+    ]

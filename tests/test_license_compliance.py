@@ -45,6 +45,10 @@ class TestNormalizeLicense:
     def test_unrecognized_returns_none(self):
         assert normalize_license("Some Bespoke EULA") is None
 
+    def test_invalid_spdx_like_identifier_returns_none(self):
+        assert normalize_license("MIT-malware") is None
+        assert normalize_license("Apache-Fake") is None
+
 
 class TestParseSpdxExpression:
     def test_single_license(self):
@@ -176,6 +180,26 @@ class TestEvaluateLicense:
         }
         finding = evaluate_license("requests", "MIT", "permissive", policy=custom_policy)
         assert finding.verdict == "PROHIBITED"
+
+    def test_and_expression_uses_most_restrictive_result(self):
+        finding = evaluate_license("combined-lib", "MIT AND GPL-3.0-only", "permissive")
+        assert finding.verdict == "PROHIBITED"
+
+    def test_or_expression_can_select_compatible_branch(self):
+        finding = evaluate_license("dual-lib", "GPL-3.0-only OR MIT", "permissive")
+        assert finding.verdict == "PASS"
+
+    def test_empty_allow_list_does_not_fail_open(self):
+        policy = {"permissive": {"allow": [], "review": [], "deny": []}}
+        finding = evaluate_license("requests", "MIT", "permissive", policy=policy)
+        assert finding.verdict == "REVIEW"
+
+    def test_with_expression_preserves_exception(self):
+        finding = evaluate_license(
+            "classpath-lib", "Apache-2.0 WITH Classpath-exception-2.0", "permissive"
+        )
+        assert finding.verdict == "PASS"
+        assert finding.spdx_ids == ["Apache-2.0 WITH Classpath-exception-2.0"]
 
     def test_default_policy_object_has_all_four_categories(self):
         assert set(DEFAULT_COMPATIBILITY_POLICY.keys()) == {
