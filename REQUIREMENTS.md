@@ -80,7 +80,7 @@
 | # | Requirement | Status | Notes |
 |---|---|---|---|
 | 5.1 | Query NVD API v2 (`/rest/json/cves/2.0`) | ✅ | Replaces deprecated NVD v1 |
-| 5.2 | Apply 3-year look-back window via `pubStartDate` | ✅ | `_CVE_LOOKBACK_DAYS = 3 × 365` |
+| 5.2 | Apply 3-year look-back window via `pubStartDate` | ✅ | Fallback synchronization path uses ≤120-day windows; normal package scans use OSV CVE aliases |
 | 5.3 | Return up to 50 CVEs per query (`resultsPerPage`) | ✅ | Configurable constant |
 | 5.4 | Parse CVSSv3.1 severity and base score (preferred) | ✅ | `cvssMetricV31` checked first |
 | 5.5 | Fall back to CVSSv3.0 if v3.1 unavailable | ✅ | Priority chain: v3.1 → v3.0 → v2 |
@@ -95,6 +95,7 @@
 | 5.14 | Track maximum EPSS value across all CVEs (`max_epss`) | ✅ | Useful for dashboard display |
 | 5.15 | Graceful batch-level EPSS failure (continue other batches) | ✅ | Per-batch try/except; partial results returned |
 | 5.16 | NVD rate-limit enforcement | ✅ | `_rate_limited_get()` using `nvd.rate_limit` config |
+| 5.17 | Targeted NVD CVE enrichment and caching | ✅ | OSV discovers CVE aliases; `check_cves(cve_ids=...)` queries `cveId` and caches CVSS/EPSS data |
 
 ---
 
@@ -226,12 +227,12 @@
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
-| 13.1 | Unit tests using `pytest` + `unittest.mock` | ✅ | 255 tests across `test_oss_scorer.py`, `test_round3_fixes.py`, `test_cli.py` |
+| 13.1 | Unit tests using `pytest` + `unittest.mock` | ✅ | 396 tests across the project test suite |
 | 13.2 | Config loading tests (defaults, env overrides, missing file) | ✅ | `TestOSSConfig` — 4 tests |
 | 13.3 | GitHub URL parsing tests (valid, malformed, edge cases) | ✅ | `TestParseGitHubOwnerRepo` — 6 tests |
 | 13.4 | Header building tests | ✅ | `TestBuildHeaders` — 4 tests |
 | 13.5 | GitHub metrics fetch tests (success, network error, bad URL) | ✅ | `TestGetGitHubMetrics` — 4 tests |
-| 13.6 | NVD v2 CVE parsing tests (severity bands, EPSS, errors) | ✅ | `TestCheckCves` — 4 tests |
+| 13.6 | NVD v2 CVE parsing tests (severity bands, EPSS, errors) | ✅ | `TestCheckCves` — targeted aliases, caching, pagination, severity bands, EPSS, errors |
 | 13.7 | EPSS score fetch and batch-split tests | ✅ | `TestGetEpssScores` — 4 tests |
 | 13.8 | Security score calculation tests (all deduction tiers, floor, scorecard blend) | ✅ | `TestCalculateSecurityScore` — 10 tests |
 | 13.9 | Activity score staleness bucket tests | ✅ | `TestCalculateActivityScore` — 7 tests |
@@ -255,7 +256,7 @@
 | 13.27 | EPSS config threshold override test | ✅ | `TestEpssConfigThresholds` — 3 tests |
 | 13.28 | Scorecard enabled flag test | ✅ | `TestScorecardEnabledFlag` — 2 tests |
 | 13.29 | Score weights sum validation warning test | ✅ | `TestWeightsSumWarning` — 2 tests |
-| 13.32 | Provider safety / round-3 fix regression tests | ✅ | `test_round3_fixes.py` — 35 tests: decision contract, provider status, scorecard KeyError, NVD single-request, geo separation, evidence warnings, `RedactingFilter` types |
+| 13.32 | Provider safety / round-3 fix regression tests | ✅ | `test_round3_fixes.py` — provider status, bounded NVD windows, geo separation, evidence warnings, and `RedactingFilter` types |
 | 13.33 | CLI integration tests | ✅ | `test_cli.py` — 12 tests: JSON/text/markdown output, exit codes 0–4, `insufficient_data`, `compliance`, `--review-fails-ci` precedence |
 | 13.30 | Integration / end-to-end tests with real API calls | ❌ | Future roadmap (requires API keys and network) |
 | 13.31 | Performance / load tests | ❌ | Future roadmap |

@@ -628,6 +628,7 @@ class OSSScorer:
     def __init__(self):
         self.config = OSSConfig().config
         self._last_request_time: float = 0.0
+        self._cve_cache: dict[str, dict | None] = {}
         self.github_provider = GitHubProvider(self.config)
         self.scorecard_provider = ScorecardProvider(self.config)
         self.framework = self.create_oss_framework()
@@ -850,13 +851,131 @@ class OSSScorer:
             "error": response.error.to_dict() if response.error else None,
         }
 
-    def check_cves(self, package_name: str, ecosystem: str = "npm") -> dict:
+    def _check_cves_by_ids(self, package_name: str, cve_ids: list[str]) -> dict:
+        """Fetch CVSS details only for CVE aliases discovered by OSV."""
+        empty = {
+            "total": 0,
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "epss_high": 0,
+            "max_epss": 0.0,
+            "cves": [],
+            "last_updated": None,
+            "status": "error",
+            "error": None,
+        }
+        cache = getattr(self, "_cve_cache", {})
+        unique_ids = list(dict.fromkeys(cve_id for cve_id in cve_ids if cve_id))
+        fetched_ids: list[str] = []
+        try:
+            for cve_id in unique_ids:
+                if cve_id in cache:
+                    continue
+                fetched_ids.append(cve_id)
+                response = self._rate_limited_get(
+                    "https://services.nvd.nist.gov/rest/json/cves/2.0",
+                    headers=self._build_headers("nvd"),
+                    timeout=self.config.get("nvd", {}).get("timeout", 10),
+                    params={"cveId": cve_id},
+                )
+                if response.status_code != 200:
+                    logger.warning("NVD API returned %s for %s", response.status_code, cve_id)
+                    empty["error"] = f"HTTP {response.status_code}"
+                    return empty
+                cache[cve_id] = None
+                for item in response.json().get("vulnerabilities", []):
+                    cve_obj = item.get("cve", {})
+                    if cve_obj.get("id") != cve_id:
+                        continue
+                    metrics = cve_obj.get("metrics", {})
+                    severity = "UNKNOWN"
+                    base_score = 0.0
+                    for key in ("cvssMetricV31", "cvssMetricV30"):
+                        bucket = metrics.get(key, [])
+                        if bucket:
+                            cvss = bucket[0].get("cvssData", {})
+                            severity = cvss.get("baseSeverity", "UNKNOWN").upper()
+                            base_score = float(cvss.get("baseScore", 0))
+                            break
+                    else:
+                        bucket = metrics.get("cvssMetricV2", [])
+                        if bucket:
+                            severity = bucket[0].get("baseSeverity", "UNKNOWN").upper()
+                            base_score = float(bucket[0].get("cvssData", {}).get("baseScore", 0))
+                    cache[cve_id] = {
+                        "id": cve_id,
+                        "severity": severity,
+                        "base_score": base_score,
+                        "epss": 0.0,
+                        "epss_percentile": 0.0,
+                    }
+                    break
+        except requests.RequestException as exc:
+            logger.error("NVD API error for %s: %s", package_name, str(exc))
+            empty["error"] = str(exc)
+            return empty
+
+        self._cve_cache = cache
+        parsed = [cache[cve_id].copy() for cve_id in unique_ids if cache[cve_id]]
+        epss_map = self.get_epss_scores(fetched_ids) if fetched_ids else {}
+        for cve in parsed:
+            if cve["id"] in epss_map:
+                cve["epss"] = epss_map[cve["id"]]["epss"]
+                cve["epss_percentile"] = epss_map[cve["id"]]["percentile"]
+            cache[cve["id"]] = cve
+        return self._build_cve_result(parsed)
+
+    def _build_cve_result(self, parsed: list[dict]) -> dict:
+        """Build the normalized CVE result after provider-specific retrieval."""
+        if not parsed:
+            return {
+                "total": 0,
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "epss_high": 0,
+                "max_epss": 0.0,
+                "cves": [],
+                "last_updated": datetime.now().isoformat(),
+                "status": "success",
+                "error": None,
+            }
+        return {
+            "total": len(parsed),
+            "critical": sum(1 for c in parsed if c["severity"] == "CRITICAL"),
+            "high": sum(1 for c in parsed if c["severity"] == "HIGH"),
+            "medium": sum(1 for c in parsed if c["severity"] == "MEDIUM"),
+            "low": sum(1 for c in parsed if c["severity"] == "LOW"),
+            "epss_high": sum(1 for c in parsed if c["epss"] >= _EPSS_HIGH_THRESHOLD),
+            "max_epss": round(max((c["epss"] for c in parsed), default=0.0), 4),
+            "cves": parsed,
+            "last_updated": datetime.now().isoformat(),
+            "status": "success",
+            "error": None,
+        }
+
+    def check_cves(
+        self,
+        package_name: str,
+        ecosystem: str = "npm",
+        cve_ids: list[str] | None = None,
+    ) -> dict:
         """Query NVD v2 API for CVEs then enrich each one with an EPSS score.
+
+        When *cve_ids* is provided, only those OSV-discovered CVE aliases are
+        queried. Without it, the bounded-window keyword search is retained for
+        offline synchronization and scheduled database refreshes.
 
         Returns a dict with severity-band counts, EPSS-based counts, the
         highest observed EPSS value, and the full list of parsed CVE objects.
         All counts cover the past 3 years only.
         """
+        if cve_ids is not None:
+            return self._check_cves_by_ids(package_name, cve_ids)
+
         _empty = {
             "total": 0,
             "critical": 0,
@@ -1613,20 +1732,27 @@ class OSSWorkflow:
                     component_data["package_name"],
                 )
 
-            cve_data = self.scorer.check_cves(component_data["package_name"])
-            results["cve_data"] = cve_data
-
             # Vulnerability + malicious-package check via OSV / ossf/malicious-packages
             if ecosystem:
                 osv_data = self.scorer.check_osv(
                     component_data["package_name"], ecosystem, component_data.get("version")
                 )
                 results["osv_data"] = osv_data
+                cve_ids = [
+                    alias
+                    for advisory in osv_data.get("advisories", [])
+                    for alias in [advisory.get("id", ""), *(advisory.get("aliases") or [])]
+                    if alias.startswith("CVE-")
+                ]
+                results["cve_data"] = self.scorer.check_cves(
+                    component_data["package_name"], ecosystem, list(dict.fromkeys(cve_ids))
+                )
             else:
                 logger.info(
                     "No 'ecosystem' or 'language' in component_data — " "OSV check skipped for %s",
                     component_data["package_name"],
                 )
+                results["cve_data"] = self.scorer.check_cves(component_data["package_name"])
 
         # ------------------------------------------------------------------
         # Provider-health audit — detect failed security data sources before

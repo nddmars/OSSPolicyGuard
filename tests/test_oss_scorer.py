@@ -382,6 +382,26 @@ class TestCheckCves:
             assert params["pubStartDate"] < params["pubEndDate"]
             assert params["pubStartDate"][:10] <= params["pubEndDate"][:10]
 
+    def test_osv_alias_lookup_is_cached(self, monkeypatch):
+        scorer = _make_scorer()
+        response = MagicMock(status_code=200)
+        response.json.return_value = _nvd_v2_response(("CVE-2021-0001", "HIGH", 7.5))
+        calls = []
+        epss_calls = []
+        monkeypatch.setattr(
+            scorer,
+            "_rate_limited_get",
+            lambda *args, **kwargs: (calls.append(kwargs["params"]), response)[1],
+        )
+        monkeypatch.setattr(scorer, "get_epss_scores", lambda ids: (epss_calls.append(ids), {})[1])
+
+        first = scorer.check_cves("some-lib", "pypi", ["CVE-2021-0001"])
+        second = scorer.check_cves("other-lib", "pypi", ["CVE-2021-0001"])
+
+        assert first["total"] == second["total"] == 1
+        assert calls == [{"cveId": "CVE-2021-0001"}]
+        assert epss_calls == [["CVE-2021-0001"]]
+
     @patch("oss_scorer.requests.get")
     def test_epss_scores_attached_to_cves(self, mock_get):
         nvd_resp = MagicMock(status_code=200)
