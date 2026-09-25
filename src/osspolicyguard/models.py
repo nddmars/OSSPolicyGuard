@@ -180,37 +180,42 @@ class EvaluationResult:
         legacy_scores: dict[str, Any] = result.get("scores", {})
         dimensions: dict[str, float] = {
             Dimension.SECURITY.value.lower(): round(float(legacy_scores.get("security", 0.0)), 1),
-            Dimension.MAINTENANCE.value.lower(): round(float(legacy_scores.get("activity", 0.0)), 1),
+            Dimension.MAINTENANCE.value.lower(): round(
+                float(legacy_scores.get("activity", 0.0)), 1
+            ),
             Dimension.COMMUNITY.value.lower(): round(float(legacy_scores.get("community", 0.0)), 1),
             Dimension.SUPPLY_CHAIN.value.lower(): round(float(legacy_scores.get("trust", 0.0)), 1),
         }
 
         malicious = bool(
-            result.get("is_malicious")
-            or result.get("osv_data", {}).get("is_malicious", False)
+            result.get("is_malicious") or result.get("osv_data", {}).get("is_malicious", False)
         )
 
         evidence: list[ProviderResult] = []
 
         if "github_metrics" in result:
             gh = result["github_metrics"]
-            evidence.append(ProviderResult(
-                provider="github",
-                status=gh.get("status", "success"),
-                fetched_at=gh.get("fetched_at", ""),
-                data={k: v for k, v in gh.items() if k not in {"status", "fetched_at"}},
-                error=str(gh["error"]) if gh.get("error") else None,
-            ))
+            evidence.append(
+                ProviderResult(
+                    provider="github",
+                    status=gh.get("status", "success"),
+                    fetched_at=gh.get("fetched_at", ""),
+                    data={k: v for k, v in gh.items() if k not in {"status", "fetched_at"}},
+                    error=str(gh["error"]) if gh.get("error") else None,
+                )
+            )
 
         if "scorecard_data" in result:
             sc = result["scorecard_data"]
-            evidence.append(ProviderResult(
-                provider="scorecard",
-                status=sc.get("status", "success"),
-                fetched_at=sc.get("fetched_at", ""),
-                data={k: v for k, v in sc.items() if k not in {"status", "fetched_at"}},
-                error=str(sc["error"]) if sc.get("error") else None,
-            ))
+            evidence.append(
+                ProviderResult(
+                    provider="scorecard",
+                    status=sc.get("status", "success"),
+                    fetched_at=sc.get("fetched_at", ""),
+                    data={k: v for k, v in sc.items() if k not in {"status", "fetched_at"}},
+                    error=str(sc["error"]) if sc.get("error") else None,
+                )
+            )
 
         if "osv_data" in result:
             osv = result["osv_data"]
@@ -223,13 +228,17 @@ class EvaluationResult:
                 osv_status = "unavailable"
             else:
                 osv_status = "success"
-            evidence.append(ProviderResult(
-                provider="osv",
-                status=osv_status,
-                fetched_at=osv.get("last_updated") or "",
-                data={k: v for k, v in osv.items() if k not in {"last_updated", "status", "error"}},
-                error=osv.get("error"),
-            ))
+            evidence.append(
+                ProviderResult(
+                    provider="osv",
+                    status=osv_status,
+                    fetched_at=osv.get("last_updated") or "",
+                    data={
+                        k: v for k, v in osv.items() if k not in {"last_updated", "status", "error"}
+                    },
+                    error=osv.get("error"),
+                )
+            )
 
         if "cve_data" in result:
             cve = result["cve_data"]
@@ -237,18 +246,26 @@ class EvaluationResult:
             # missing-timestamp heuristic for older scorer outputs.
             if "status" in cve:
                 cve_status = cve["status"]
-            elif not cve.get("last_updated") and cve.get("total", 0) == 0 \
-                    and not cve.get("critical") and not cve.get("high"):
+            elif (
+                not cve.get("last_updated")
+                and cve.get("total", 0) == 0
+                and not cve.get("critical")
+                and not cve.get("high")
+            ):
                 cve_status = "unavailable"
             else:
                 cve_status = "success"
-            evidence.append(ProviderResult(
-                provider="nvd",
-                status=cve_status,
-                fetched_at=cve.get("last_updated") or "",
-                data={k: v for k, v in cve.items() if k not in {"last_updated", "status", "error"}},
-                error=cve.get("error"),
-            ))
+            evidence.append(
+                ProviderResult(
+                    provider="nvd",
+                    status=cve_status,
+                    fetched_at=cve.get("last_updated") or "",
+                    data={
+                        k: v for k, v in cve.items() if k not in {"last_updated", "status", "error"}
+                    },
+                    error=cve.get("error"),
+                )
+            )
 
         if "download_data" in result:
             dl = result["download_data"]
@@ -258,13 +275,15 @@ class EvaluationResult:
                 dl_status = "unavailable"
             else:
                 dl_status = dl.get("status", "success")
-            evidence.append(ProviderResult(
-                provider=dl.get("registry", "registry"),
-                status=dl_status,
-                fetched_at="",
-                data={k: v for k, v in dl.items() if k not in {"status", "error"}},
-                error=dl.get("error"),
-            ))
+            evidence.append(
+                ProviderResult(
+                    provider=dl.get("registry", "registry"),
+                    status=dl_status,
+                    fetched_at="",
+                    data={k: v for k, v in dl.items() if k not in {"status", "error"}},
+                    error=dl.get("error"),
+                )
+            )
 
         warnings: list[str] = list(result.get("warnings", []))
         generated_at = result.get("timestamp") or _now_utc_iso()

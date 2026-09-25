@@ -80,7 +80,7 @@
 | # | Requirement | Status | Notes |
 |---|---|---|---|
 | 5.1 | Query NVD API v2 (`/rest/json/cves/2.0`) | ✅ | Replaces deprecated NVD v1 |
-| 5.2 | Apply 3-year look-back window via `pubStartDate` | ✅ | `_CVE_LOOKBACK_DAYS = 3 × 365` |
+| 5.2 | Apply 3-year look-back window via `pubStartDate` | ✅ | Fallback synchronization path uses ≤120-day windows; normal package scans use OSV CVE aliases |
 | 5.3 | Return up to 50 CVEs per query (`resultsPerPage`) | ✅ | Configurable constant |
 | 5.4 | Parse CVSSv3.1 severity and base score (preferred) | ✅ | `cvssMetricV31` checked first |
 | 5.5 | Fall back to CVSSv3.0 if v3.1 unavailable | ✅ | Priority chain: v3.1 → v3.0 → v2 |
@@ -95,6 +95,7 @@
 | 5.14 | Track maximum EPSS value across all CVEs (`max_epss`) | ✅ | Useful for dashboard display |
 | 5.15 | Graceful batch-level EPSS failure (continue other batches) | ✅ | Per-batch try/except; partial results returned |
 | 5.16 | NVD rate-limit enforcement | ✅ | `_rate_limited_get()` using `nvd.rate_limit` config |
+| 5.17 | Targeted NVD CVE enrichment and caching | ✅ | OSV discovers CVE aliases; `check_cves(cve_ids=...)` queries `cveId` and caches CVSS/EPSS data |
 
 ---
 
@@ -226,12 +227,12 @@
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
-| 13.1 | Unit tests using `pytest` + `unittest.mock` | ✅ | 255 tests across `test_oss_scorer.py`, `test_round3_fixes.py`, `test_cli.py` |
+| 13.1 | Unit tests using `pytest` + `unittest.mock` | ✅ | 396 tests across the project test suite |
 | 13.2 | Config loading tests (defaults, env overrides, missing file) | ✅ | `TestOSSConfig` — 4 tests |
 | 13.3 | GitHub URL parsing tests (valid, malformed, edge cases) | ✅ | `TestParseGitHubOwnerRepo` — 6 tests |
 | 13.4 | Header building tests | ✅ | `TestBuildHeaders` — 4 tests |
 | 13.5 | GitHub metrics fetch tests (success, network error, bad URL) | ✅ | `TestGetGitHubMetrics` — 4 tests |
-| 13.6 | NVD v2 CVE parsing tests (severity bands, EPSS, errors) | ✅ | `TestCheckCves` — 4 tests |
+| 13.6 | NVD v2 CVE parsing tests (severity bands, EPSS, errors) | ✅ | `TestCheckCves` — targeted aliases, caching, pagination, severity bands, EPSS, errors |
 | 13.7 | EPSS score fetch and batch-split tests | ✅ | `TestGetEpssScores` — 4 tests |
 | 13.8 | Security score calculation tests (all deduction tiers, floor, scorecard blend) | ✅ | `TestCalculateSecurityScore` — 10 tests |
 | 13.9 | Activity score staleness bucket tests | ✅ | `TestCalculateActivityScore` — 7 tests |
@@ -255,7 +256,7 @@
 | 13.27 | EPSS config threshold override test | ✅ | `TestEpssConfigThresholds` — 3 tests |
 | 13.28 | Scorecard enabled flag test | ✅ | `TestScorecardEnabledFlag` — 2 tests |
 | 13.29 | Score weights sum validation warning test | ✅ | `TestWeightsSumWarning` — 2 tests |
-| 13.32 | Provider safety / round-3 fix regression tests | ✅ | `test_round3_fixes.py` — 35 tests: decision contract, provider status, scorecard KeyError, NVD single-request, geo separation, evidence warnings, `RedactingFilter` types |
+| 13.32 | Provider safety / round-3 fix regression tests | ✅ | `test_round3_fixes.py` — provider status, bounded NVD windows, geo separation, evidence warnings, and `RedactingFilter` types |
 | 13.33 | CLI integration tests | ✅ | `test_cli.py` — 12 tests: JSON/text/markdown output, exit codes 0–4, `insufficient_data`, `compliance`, `--review-fails-ci` precedence |
 | 13.30 | Integration / end-to-end tests with real API calls | ❌ | Future roadmap (requires API keys and network) |
 | 13.31 | Performance / load tests | ❌ | Future roadmap |
@@ -279,7 +280,7 @@ requirement are listed with their OPG ID.
 | 14.8 | Release cadence scoring | Low | — | No formal requirement yet |
 | 14.9 | Issue/PR response time metric | Low | — | No formal requirement yet |
 | 14.10 | Commit frequency metric | Low | — | No formal requirement yet |
-| 14.11 | Multi-package batch evaluation | Low | OPG-068 | CLI manifest scan |
+| 14.11 | ~~Multi-package batch evaluation~~ | Done | OPG-068 | Implemented as `osspolicyguard manifest`; see §23.20 |
 | 14.12 | Historical trend dashboard | Low | — | No formal requirement yet |
 | 14.13 | HTML / PDF report export | Low | OPG-137 | Via license compliance report; general export roadmap |
 | 14.14 | Maven download count | Low | — | Pending public Maven Central API |
@@ -293,12 +294,14 @@ requirement are listed with their OPG ID.
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
-| 15.1 | SPDX license detection (OPG-133) | ❌ | Identify declared license from registry metadata and package files; parse SPDX expressions; store canonical SPDX identifier per package |
-| 15.2 | Copyleft propagation analysis (OPG-134) | ❌ | Flag GPL-2/3, LGPL, AGPL, MPL, EPL; determine strong/weak copyleft applicability based on link type |
-| 15.3 | License compatibility matrix (OPG-135) | ❌ | Configurable compatibility matrix; flag incompatible combinations in the dependency graph; custom allow/deny rules |
-| 15.4 | Dual-license and commercial restriction detection (OPG-136) | ❌ | Detect dual-licensed packages with commercial fees or non-commercial-use clauses; surface as REVIEW finding |
-| 15.5 | License compliance report (OPG-137) | ❌ | Machine-readable report per component: license, compatibility verdict, applicable policy rule; JSON and Markdown outputs |
-| 15.6 | Attribution / NOTICE file generation (OPG-138) | ❌ | Aggregate copyright notices and license texts for all direct and transitive dependencies; suitable for distribution bundles |
+| 15.1 | SPDX license detection (OPG-133) | ⚠️ | `normalize_license()`/`parse_spdx_expression()` in `src/osspolicyguard/license_compliance.py` map ~50 common free-form registry strings (and compound `A OR B` expressions) to canonical SPDX identifiers. Not yet wired to auto-fetch a package's declared license from registry metadata — callers (CLI `license` subcommand, or a future `scan` integration) supply the raw license string themselves |
+| 15.2 | Copyleft propagation analysis (OPG-134) | ✅ | `classify_copyleft()` flags GPL-2.0/3.0, AGPL-3.0 as strong; LGPL-2.1/3.0, MPL-2.0, EPL-1.0/2.0 as weak |
+| 15.3 | License compatibility matrix (OPG-135) | ✅ | `DEFAULT_COMPATIBILITY_POLICY` (4 project-license categories × allow/review/deny dependency categories); override wholesale via `osspolicyguard license --policy-file <json>` for custom allow/deny rules |
+| 15.4 | Dual-license and commercial restriction detection (OPG-136) | ✅ | `detect_commercial_restriction()` matches Commons Clause, BUSL, SSPL, Elastic License, non-commercial-use phrasing, etc.; always evaluates to a `PROHIBITED` category regardless of project policy |
+| 15.5 | License compliance report (OPG-137) | ✅ | `build_license_report()` (JSON) / `to_license_markdown()`; `osspolicyguard license <pkg> --license <spdx> --format json\|markdown\|text`, plus `--batch <file.json>` for multiple packages at once |
+| 15.6 | Attribution / NOTICE file generation (OPG-138) | ✅ | `generate_notice()`; `osspolicyguard license --batch <file.json> --notice` |
+
+License compliance is implemented as a standalone module (`license_compliance.py`) and CLI subcommand (`osspolicyguard license`), independent of `OSSConfig`/`config.yaml` so it works without a full scan configuration. It is not yet integrated into `scan`/`manifest`'s own output — see 15.1.
 
 ---
 
@@ -306,8 +309,8 @@ requirement are listed with their OPG ID.
 
 | # | Requirement | Status | Notes |
 |---|---|---|---|
-| 16.1 | Dependency pinning policy enforcement (OPG-139) | ❌ | Flag manifests with floating ranges (^, ~, *, latest, >x); configurable allowed range styles per ecosystem; lockfile hash-pin requirement separately configurable |
-| 16.2 | End-of-life and formal deprecation tracking (OPG-140) | ❌ | Ingest official EOL dates from registry deprecation flags, endoflife.date API, and language-runtime schedules; surface as distinct REVIEW/PROHIBITED finding with exact EOL date |
+| 16.1 | Dependency pinning policy enforcement (OPG-139) | ⚠️ | `src/osspolicyguard/dependency_pinning.py` classifies specifiers (caret/tilde/wildcard/latest/unbounded/range/exact) and checks them against a configurable `allowed_styles`/`deny_floating` policy; lockfile hash-pin checks for npm `package-lock.json` and pip-compile `requirements.txt` are separately configurable via `osspolicyguard pinning --lockfile`. Policy is global, not yet per-ecosystem, and manifest-scan integration (auto-extracting specifiers from `package.json`/`requirements.txt`) isn't wired in — callers supply specifiers directly or via `--batch` |
+| 16.2 | End-of-life and formal deprecation tracking (OPG-140) | ⚠️ | `src/osspolicyguard/eol.py` checks a product/cycle against a bundled EOL dataset (Python, Node.js, Ruby, PHP), surfacing REVIEW (or PROHIBITED via `--prohibit-past-eol`) with the exact EOL date. `EndOfLifeDateProvider` (typed, tested) can fetch live data from the public endoflife.date API to extend the bundled dataset, but registry-deprecation-flag ingestion and CLI wiring for the live provider are not yet implemented |
 
 ---
 
@@ -395,9 +398,16 @@ requirement are listed with their OPG ID.
 | 23.17 | `compliance` field in JSON output | ✅ | Contains `geo_jurisdiction` sub-section when geo enabled |
 | 23.18 | Provider warnings in all output formats | ✅ | Text, JSON, Markdown; lists each named provider failure |
 | 23.19 | `osspolicyguard version` subcommand | ✅ | Prints installed package version and exits 0 |
-| 23.20 | `osspolicyguard manifest` subcommand (placeholder) | ✅ | Returns exit 2 with "not yet implemented" message (OPG-068) |
+| 23.20 | `osspolicyguard manifest` subcommand (OPG-068) | ✅ | Auto-detects or accepts a manifest path (`package.json`/`requirements.txt`), scans every declared dependency, and aggregates the worst-case exit code (PROHIBITED > insufficient-data > REVIEW) |
 | 23.21 | `--log-level` flag | ✅ | DEBUG / INFO / WARNING / ERROR; wires into `configure_logging()` with secret-redacting filter |
 
 ---
 
-*Last updated: 2026-08-25 — CLI section 23 added; 255 tests passing.*
+*Last updated: 2026-08-29 — manifest subcommand (OPG-068) implemented; seven typed next-gen
+providers (§3) implemented against the `ProviderBase` contract (incl. `EndOfLifeDateProvider`);
+CI now gates on ruff/black/mypy; GitHub-URL parsing unified across both provider layers (REQ-010,
+fixing a netloc-spoofing bug in the typed provider); license compliance engine and
+`osspolicyguard license` subcommand implemented (§15, OPG-134/135/136/137/138 done, OPG-133
+partial); dependency pinning policy and end-of-life tracking implemented (§16,
+`osspolicyguard pinning` / `osspolicyguard eol`, OPG-139/140 both partial — see notes);
+382 tests passing.*

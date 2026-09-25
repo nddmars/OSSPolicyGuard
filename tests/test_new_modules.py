@@ -3,13 +3,11 @@
 Covers: exceptions, models, identity, reports, typosquatting,
 advisory_dedup, policy, kev, dep_confusion, artifact_inventory.
 """
+
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 # Ensure the src layout is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -373,6 +371,7 @@ class TestKev:
             }
         }
         import time
+
         provider._loaded_at = time.time()
         return provider
 

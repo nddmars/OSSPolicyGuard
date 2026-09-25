@@ -1,43 +1,57 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-
-def parse_manifest_dependencies(manifest_path: str) -> list[str]:
-    path = Path(manifest_path)
-    if path.suffix == ".json":
-        data = json.loads(path.read_text(encoding="utf-8"))
-        deps = []
-        for section in ("dependencies", "devDependencies"):
-            deps.extend(data.get(section, {}).keys())
-        return sorted(set(deps))
-
-    deps: list[str] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.split("#", 1)[0].strip()
-        if not line:
-            continue
-        match = re.match(r"^([A-Za-z0-9_.-]+)", line)
-        if match:
-            deps.append(match.group(1))
-    return deps
+from osspolicyguard.cli import parse_manifest_dependencies
 
 
-def run_scan(package_name: str, ecosystem: str) -> dict[str, Any]:
+class ScanError(RuntimeError):
+    def __init__(self, returncode: int, message: str) -> None:
+        super().__init__(message)
+        self.returncode = returncode
+
+
+def run_scan(
+    package_name: str, ecosystem: str, version: str | None = None
+) -> tuple[dict[str, Any], int]:
+    command = [
+        sys.executable,
+        "-m",
+        "osspolicyguard.cli",
+        "scan",
+        package_name,
+        "--ecosystem",
+        ecosystem,
+        "--format",
+        "json",
+    ]
+    if version:
+        command.extend(["--package-version", version])
     result = subprocess.run(
-        [sys.executable, "-m", "osspolicyguard.cli", "scan", package_name, "--ecosystem", ecosystem, "--format", "json"],
+        command,
         capture_output=True,
         text=True,
         check=False,
     )
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        report = None
+
+    if report is not None:
+        return report, result.returncode
+
     if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout)
-    return json.loads(result.stdout)
+        output = result.stderr or result.stdout
+        message = next(
+            (line for line in reversed(output.splitlines()) if line.strip()), "scan failed"
+        )
+        raise ScanError(result.returncode, message)
+    raise ScanError(99, "scan returned invalid JSON")
 
 
 def main() -> int:
@@ -50,9 +64,60 @@ def main() -> int:
         raise SystemExit("No supported manifest found")
 
     deps = parse_manifest_dependencies(str(manifest_path))
-    for package_name in deps:
-        report = run_scan(package_name, ecosystem)
-        print(json.dumps(report, indent=2))
+    reports: list[dict[str, Any]] = []
+    exit_codes: list[int] = []
+    for dependency in deps:
+        package = {
+            "name": dependency["name"],
+            "ecosystem": ecosystem,
+            "version": dependency["version"],
+        }
+        try:
+            report, scan_exit_code = run_scan(dependency["name"], ecosystem, dependency["version"])
+            if scan_exit_code:
+                exit_codes.append(scan_exit_code if scan_exit_code in {1, 2, 3, 4, 99} else 99)
+        except ScanError as exc:
+            scan_exit_code = exc.returncode if exc.returncode in {1, 2, 3, 4, 99} else 99
+            exit_codes.append(scan_exit_code)
+            provider_status = {
+                3: "configuration_error",
+                99: "internal_error",
+            }.get(scan_exit_code, "error")
+            report = {
+                "package": package,
+                "decision": "PROHIBITED" if scan_exit_code == 1 else "REVIEW",
+                "insufficient_data": scan_exit_code == 4,
+                "provider_statuses": {"scan": provider_status},
+                "warnings": [str(exc)],
+            }
+        except Exception as exc:
+            exit_codes.append(99)
+            report = {
+                "package": package,
+                "decision": "REVIEW",
+                "insufficient_data": False,
+                "provider_statuses": {"scan": "internal_error"},
+                "warnings": [f"Unexpected scan error: {exc}"],
+            }
+        reports.append(report)
+
+        if report.get("decision") == "PROHIBITED":
+            exit_codes.append(1)
+        elif report.get("insufficient_data"):
+            exit_codes.append(4)
+
+    print(json.dumps({"dependencies": reports}, indent=2))
+
+    if 1 in exit_codes:
+        return 1
+    if 4 in exit_codes:
+        return 4
+    if 2 in exit_codes:
+        return 2
+    if 3 in exit_codes:
+        return 3
+    if 99 in exit_codes:
+        return 99
 
     return 0
 

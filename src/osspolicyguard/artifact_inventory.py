@@ -4,6 +4,7 @@ Scans NPM tarballs and PyPI wheel archives to surface lifecycle hooks,
 native binaries, obfuscated code, and network-capable files — no code is
 executed during the scan.
 """
+
 from __future__ import annotations
 
 import io  # noqa: F401  (part of declared stdlib surface)
@@ -21,32 +22,36 @@ from typing import Optional
 # Constants
 # ---------------------------------------------------------------------------
 
-NPM_LIFECYCLE: frozenset[str] = frozenset([
-    "preinstall",
-    "install",
-    "postinstall",
-    "preuninstall",
-    "uninstall",
-    "postuninstall",
-    "prepublish",
-    "prepare",
-    "prepack",
-    "postpack",
-])
+NPM_LIFECYCLE: frozenset[str] = frozenset(
+    [
+        "preinstall",
+        "install",
+        "postinstall",
+        "preuninstall",
+        "uninstall",
+        "postuninstall",
+        "prepublish",
+        "prepare",
+        "prepack",
+        "postpack",
+    ]
+)
 
-BINARY_EXTS: frozenset[str] = frozenset([
-    ".exe",
-    ".dll",
-    ".so",
-    ".dylib",
-    ".node",
-    ".bin",
-    ".elf",
-    ".wasm",
-    ".pyd",
-    ".a",
-    ".lib",
-])
+BINARY_EXTS: frozenset[str] = frozenset(
+    [
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".node",
+        ".bin",
+        ".elf",
+        ".wasm",
+        ".pyd",
+        ".a",
+        ".lib",
+    ]
+)
 
 # Detects outbound-network API usage in source files.
 # Unescaped dots are intentional (broad matching).
@@ -71,20 +76,30 @@ MAX_FILE_COUNT: int = 5_000
 _READ_CHUNK: int = 64 * 1024  # 64 KB
 
 # File suffixes eligible for content-based analysis inside PyPI wheels.
-_TEXT_SUFFIXES: frozenset[str] = frozenset([
-    ".py", ".pyw", ".js", ".ts", ".sh", ".bash", ".rb", ".pl",
-])
+_TEXT_SUFFIXES: frozenset[str] = frozenset(
+    [
+        ".py",
+        ".pyw",
+        ".js",
+        ".ts",
+        ".sh",
+        ".bash",
+        ".rb",
+        ".pl",
+    ]
+)
 
 
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ArtifactInventory:
     """Structured result of a static package inventory scan."""
 
-    lifecycle_scripts: list[dict]       # [{name, command, source_file}]
+    lifecycle_scripts: list[dict]  # [{name, command, source_file}]
     native_binaries: list[str]
     obfuscated_files: list[str]
     network_capable_files: list[str]
@@ -141,6 +156,7 @@ class ArtifactInventory:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _check_obfuscated(content: bytes) -> bool:
     """Return True if *content* appears to be obfuscated or otherwise suspicious.
@@ -199,17 +215,20 @@ def _extract_npm_lifecycle(scripts: object, source_file: str) -> list[dict]:
         return results
     for script_name, command in scripts.items():
         if script_name in NPM_LIFECYCLE:
-            results.append({
-                "name": script_name,
-                "command": command,
-                "source_file": source_file,
-            })
+            results.append(
+                {
+                    "name": script_name,
+                    "command": command,
+                    "source_file": source_file,
+                }
+            )
     return results
 
 
 # ---------------------------------------------------------------------------
 # NPM package inventory
 # ---------------------------------------------------------------------------
+
 
 def inventory_npm_package(
     package_json: Optional[dict] = None,
@@ -273,9 +292,7 @@ def inventory_npm_package(
 
                         # Path-traversal guard
                         if not _safe_path(member.name):
-                            warnings.append(
-                                f"Skipping dangerous path: {member.name}"
-                            )
+                            warnings.append(f"Skipping dangerous path: {member.name}")
                             continue
 
                         # Only process regular files
@@ -310,18 +327,14 @@ def inventory_npm_package(
                             if fobj is not None:
                                 chunk = fobj.read(_READ_CHUNK)
                         except (tarfile.TarError, OSError) as exc:
-                            warnings.append(
-                                f"Could not read {member.name}: {exc}"
-                            )
+                            warnings.append(f"Could not read {member.name}: {exc}")
                             continue
 
                         # Opportunistically harvest lifecycle scripts from any
                         # package.json found inside the archive.
                         if Path(member.name).name == "package.json" and chunk:
                             try:
-                                inner_pkg = json.loads(
-                                    chunk.decode("utf-8", errors="replace")
-                                )
+                                inner_pkg = json.loads(chunk.decode("utf-8", errors="replace"))
                                 lifecycle_scripts.extend(
                                     _extract_npm_lifecycle(
                                         inner_pkg.get("scripts", {}),
@@ -355,6 +368,7 @@ def inventory_npm_package(
 # ---------------------------------------------------------------------------
 # PyPI package inventory
 # ---------------------------------------------------------------------------
+
 
 def inventory_pypi_package(
     wheel_path: Optional[str] = None,

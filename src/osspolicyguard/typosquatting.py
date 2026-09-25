@@ -17,37 +17,141 @@ __all__ = ["detect_typosquatting", "is_suspicious", "edit_distance"]
 
 POPULAR_NPM: frozenset[str] = frozenset(
     {
-        "react", "lodash", "express", "axios", "webpack", "typescript", "jest",
-        "eslint", "prettier", "chalk", "next", "vue", "moment", "uuid", "dotenv",
-        "commander", "inquirer", "semver", "glob", "minimatch", "path",
-        "fs-extra", "cross-env", "nodemon", "ts-node", "esbuild", "rollup",
-        "vite", "tailwindcss", "postcss", "sass", "socket.io", "fastify", "koa",
-        "hapi", "sequelize", "prisma", "mongoose", "pg", "redis", "aws-sdk",
-        "zod", "yup", "joi", "ajv", "cheerio", "puppeteer", "playwright",
-        "sharp", "multer", "cors", "helmet", "morgan", "body-parser",
-        "cookie-parser", "express-validator", "passport", "jsonwebtoken",
-        "bcrypt", "crypto-js", "marked", "highlight.js",
+        "react",
+        "lodash",
+        "express",
+        "axios",
+        "webpack",
+        "typescript",
+        "jest",
+        "eslint",
+        "prettier",
+        "chalk",
+        "next",
+        "vue",
+        "moment",
+        "uuid",
+        "dotenv",
+        "commander",
+        "inquirer",
+        "semver",
+        "glob",
+        "minimatch",
+        "path",
+        "fs-extra",
+        "cross-env",
+        "nodemon",
+        "ts-node",
+        "esbuild",
+        "rollup",
+        "vite",
+        "tailwindcss",
+        "postcss",
+        "sass",
+        "socket.io",
+        "fastify",
+        "koa",
+        "hapi",
+        "sequelize",
+        "prisma",
+        "mongoose",
+        "pg",
+        "redis",
+        "aws-sdk",
+        "zod",
+        "yup",
+        "joi",
+        "ajv",
+        "cheerio",
+        "puppeteer",
+        "playwright",
+        "sharp",
+        "multer",
+        "cors",
+        "helmet",
+        "morgan",
+        "body-parser",
+        "cookie-parser",
+        "express-validator",
+        "passport",
+        "jsonwebtoken",
+        "bcrypt",
+        "crypto-js",
+        "marked",
+        "highlight.js",
     }
 )
 
 POPULAR_PYPI: frozenset[str] = frozenset(
     {
-        "requests", "numpy", "pandas", "flask", "django", "fastapi", "sqlalchemy",
-        "pydantic", "pytest", "boto3", "pillow", "click", "httpx", "aiohttp",
-        "uvicorn", "gunicorn", "celery", "redis", "pymongo", "psycopg2",
-        "cryptography", "paramiko", "yaml", "toml", "attrs", "jinja2", "arrow",
-        "black", "flake8", "mypy", "pylint", "bandit", "safety", "scrapy",
-        "beautifulsoup4", "lxml", "selenium", "playwright", "tensorflow", "torch",
-        "scikit-learn", "matplotlib", "scipy", "statsmodels", "airflow",
-        "kubernetes", "docker", "ansible", "fabric", "rich", "typer", "httpcore",
-        "anyio", "starlette", "passlib", "python-jose", "alembic",
-        "pydantic-settings", "python-dotenv", "loguru", "structlog",
+        "requests",
+        "numpy",
+        "pandas",
+        "flask",
+        "django",
+        "fastapi",
+        "sqlalchemy",
+        "pydantic",
+        "pytest",
+        "boto3",
+        "pillow",
+        "click",
+        "httpx",
+        "aiohttp",
+        "uvicorn",
+        "gunicorn",
+        "celery",
+        "redis",
+        "pymongo",
+        "psycopg2",
+        "cryptography",
+        "paramiko",
+        "yaml",
+        "toml",
+        "attrs",
+        "jinja2",
+        "arrow",
+        "black",
+        "flake8",
+        "mypy",
+        "pylint",
+        "bandit",
+        "safety",
+        "scrapy",
+        "beautifulsoup4",
+        "lxml",
+        "selenium",
+        "playwright",
+        "tensorflow",
+        "torch",
+        "scikit-learn",
+        "matplotlib",
+        "scipy",
+        "statsmodels",
+        "airflow",
+        "kubernetes",
+        "docker",
+        "ansible",
+        "fabric",
+        "rich",
+        "typer",
+        "httpcore",
+        "anyio",
+        "starlette",
+        "passlib",
+        "python-jose",
+        "alembic",
+        "pydantic-settings",
+        "python-dotenv",
+        "loguru",
+        "structlog",
     }
 )
 
 # ---------------------------------------------------------------------------
 # String utility functions
 # ---------------------------------------------------------------------------
+
 
 def edit_distance(a: str, b: str) -> int:
     """Return the Levenshtein edit distance between *a* and *b*.
@@ -69,8 +173,8 @@ def edit_distance(a: str, b: str) -> int:
                 dp[i][j] = dp[i - 1][j - 1]
             else:
                 dp[i][j] = 1 + min(
-                    dp[i - 1][j],      # deletion
-                    dp[i][j - 1],      # insertion
+                    dp[i - 1][j],  # deletion
+                    dp[i][j - 1],  # insertion
                     dp[i - 1][j - 1],  # substitution
                 )
     return dp[m][n]
@@ -113,6 +217,7 @@ def _separator_normalize(name: str) -> str:
 # ---------------------------------------------------------------------------
 # Detection
 # ---------------------------------------------------------------------------
+
 
 def detect_typosquatting(
     package_name: str,

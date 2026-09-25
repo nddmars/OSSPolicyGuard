@@ -1,4 +1,5 @@
-"""OSV (Open Source Vulnerabilities) provider: queries vulnerability advisories by package."""
+"""endoflife.date provider: live end-of-life / support-cycle data for
+language runtimes and platforms (requirements.md §16.2, OPG-140)."""
 
 from __future__ import annotations
 
@@ -8,30 +9,25 @@ import requests
 
 from . import ProviderBase, ProviderResponse, ProviderStatus
 
-_OSV_API = "https://api.osv.dev/v1/query"
+_EOL_API = "https://endoflife.date/api/{product}.json"
 
 
-class OSVProvider(ProviderBase):
-    """Queries OSV.dev for vulnerabilities (and MAL- malicious-package advisories)."""
+class EndOfLifeDateProvider(ProviderBase):
+    """Fetches release-cycle end-of-life data from the public endoflife.date API."""
 
-    name = "osv"
+    name = "endoflife"
 
-    def fetch(
-        self, ecosystem: str, package: str, version: str | None = None, **kwargs: Any
-    ) -> ProviderResponse:
-        body: dict[str, Any] = {"package": {"ecosystem": ecosystem, "name": package}}
-        if version:
-            body["version"] = version
-
+    def fetch(self, product: str, **kwargs: Any) -> ProviderResponse:
+        url = _EOL_API.format(product=product.lower())
         try:
-            resp = requests.post(_OSV_API, json=body, timeout=self._timeout)
+            resp = requests.get(url, timeout=self._timeout)
         except requests.Timeout:
             return ProviderResponse(
                 provider=self.name,
                 status=ProviderStatus.TIMEOUT,
                 fetched_at=self._now_iso(),
-                error="OSV request timed out",
-                source_url=_OSV_API,
+                error="endoflife.date request timed out",
+                source_url=url,
             )
         except requests.RequestException as exc:
             return ProviderResponse(
@@ -39,16 +35,24 @@ class OSVProvider(ProviderBase):
                 status=ProviderStatus.UNAVAILABLE,
                 fetched_at=self._now_iso(),
                 error=f"Network error: {exc}",
-                source_url=_OSV_API,
+                source_url=url,
             )
 
+        if resp.status_code == 404:
+            return ProviderResponse(
+                provider=self.name,
+                status=ProviderStatus.UNAVAILABLE,
+                fetched_at=self._now_iso(),
+                error=f"Unknown product: {product!r}",
+                source_url=url,
+            )
         if resp.status_code == 429:
             return ProviderResponse(
                 provider=self.name,
                 status=ProviderStatus.RATE_LIMIT,
                 fetched_at=self._now_iso(),
-                error="OSV API rate limit exceeded",
-                source_url=_OSV_API,
+                error="endoflife.date rate limit exceeded",
+                source_url=url,
             )
         if resp.status_code != 200:
             return ProviderResponse(
@@ -56,7 +60,7 @@ class OSVProvider(ProviderBase):
                 status=ProviderStatus.UNKNOWN,
                 fetched_at=self._now_iso(),
                 error=f"Unexpected HTTP status {resp.status_code}",
-                source_url=_OSV_API,
+                source_url=url,
             )
 
         try:
@@ -67,28 +71,22 @@ class OSVProvider(ProviderBase):
                 status=ProviderStatus.MALFORMED,
                 fetched_at=self._now_iso(),
                 error=f"Malformed JSON response: {exc}",
-                source_url=_OSV_API,
+                source_url=url,
             )
 
-        vulns = []
-        is_malicious = False
-        for vuln in payload.get("vulns", []):
-            vuln_id = vuln.get("id", "")
-            aliases = vuln.get("aliases", [])
-            if vuln_id.startswith("MAL-") or any(a.startswith("MAL-") for a in aliases):
-                is_malicious = True
-            severity_list = vuln.get("severity", [])
-            severity = severity_list[0].get("score") if severity_list else None
-            vulns.append({"id": vuln_id, "aliases": aliases, "severity": severity})
-
+        cycles = [
+            {
+                "cycle": str(entry.get("cycle")),
+                "eol": entry.get("eol"),
+                "latest": entry.get("latest"),
+            }
+            for entry in payload
+            if isinstance(entry, dict)
+        ]
         return ProviderResponse(
             provider=self.name,
             status=ProviderStatus.SUCCESS,
             fetched_at=self._now_iso(),
-            data={
-                "vuln_count": len(vulns),
-                "is_malicious": is_malicious,
-                "vulns": vulns,
-            },
-            source_url=_OSV_API,
+            data={"product": product, "cycles": cycles},
+            source_url=url,
         )

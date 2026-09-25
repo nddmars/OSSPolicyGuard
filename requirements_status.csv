@@ -1,10 +1,12 @@
 id,requirement,status,notes,file,updated_at
-REQ-001,Public product contract,In Progress,README updated with CLI-first workflow and scope language,README.md,2026-08-05
+REQ-001,Public product contract,Done,README documents manifest subcommand exit-code precedence and next-gen provider status,README.md,2026-08-29
 REQ-002,Safe signal policy,Done,Default scoring remains neutral; optional jurisdiction rule is explicitly opt-in and labeled as compliance,oss_scorer.py,2026-08-10
-REQ-010,Maintainable package layout,In Progress,Package entry point added; full provider refactor remains,src/osspolicyguard/cli.py,2026-08-05
+REQ-010,Maintainable package layout,In Progress,Unified GitHub-URL parsing (previously duplicated 3x in oss_scorer.py plus once more in the typed provider incl. a netloc-spoofing bug) into one canonical function shared by both provider layers; full HTTP-call wiring of OSSScorer onto the typed providers still remains (blocked on feature parity: NVD lookback/CVSS chain EPSS batching all 6 registries contributor geolocation),oss_scorer.py,2026-08-29
 REQ-011,Installable package and CLI entry point,Done,pyproject entry point and installable package verified,pyproject.toml,2026-08-05
-REQ-012,Quality automation,In Progress,GitHub Actions workflow present; lint/type checks documented but not all CI gates finalized,.github/workflows/tests.yml,2026-08-05
-REQ-020,Package scan command,In Progress,CLI scan and JSON output implemented; advanced options still pending,src/osspolicyguard/cli.py,2026-08-05
+REQ-012,Quality automation,Done,ruff/black/mypy gates added to CI and passing; pre-existing lint/format/type issues fixed,.github/workflows/tests.yml,2026-08-29
+REQ-020,Package scan command,Done,scan and manifest (OPG-068) subcommands implemented with text/json/sarif/markdown output,src/osspolicyguard/cli.py,2026-08-29
 REQ-021,Exit-code contract,Done,Decision/exit-code matrix implemented and verified,tests/test_cli.py,2026-08-06
 REQ-022,Versioned JSON schema,Done,Schema version, schema file, and JSON schema validation tests completed,tests/test_reports.py,2026-08-06
-REQ-030,Provider interface and resilience,In Progress,Provider contract work started with GitHub and Scorecard providers,oss_scorer.py,2026-08-06
+REQ-030,Provider interface and resilience,Done,All seven typed providers (GitHub Scorecard NVD OSV EPSS Registry EndOfLifeDate) implemented against ProviderBase/ProviderResponse with unit tests; not yet wired into OSSScorer (tracked under REQ-010),src/osspolicyguard/providers/,2026-08-29
+REQ-040,License compliance (OPG-133..138),Done,SPDX normalization copyleft classification commercial-restriction detection configurable compatibility policy JSON/Markdown report and NOTICE generation; osspolicyguard license subcommand; OPG-133 registry auto-detection not yet wired into scan/manifest,src/osspolicyguard/license_compliance.py,2026-08-29
+REQ-041,Dependency pinning + EOL tracking (OPG-139/140),In Progress,Version-specifier classification configurable pinning policy and npm/pip lockfile hash-pin checks (osspolicyguard pinning); bundled EOL dataset plus live EndOfLifeDateProvider (osspolicyguard eol); neither is wired into scan/manifest to auto-extract specifiers or auto-detect runtime versions,src/osspolicyguard/dependency_pinning.py,2026-08-29

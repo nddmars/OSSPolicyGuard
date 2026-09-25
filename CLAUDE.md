@@ -32,14 +32,18 @@ src/osspolicyguard/
   logging_config.py            # configure_logging(); RedactingFilter scrubs secrets from logs
   exceptions.py                # OSSPolicyGuardError hierarchy
   policy.py                    # PolicyBundle (next-gen; not yet wired into OSSScorer)
-  providers/                   # Next-gen provider stubs (not yet wired into OSSScorer)
+  license_compliance.py        # SPDX normalization, copyleft, compatibility policy, NOTICE (§15)
+  dependency_pinning.py        # Version-specifier classification, pinning policy, lockfile hash checks (§16.1)
+  eol.py                       # Bundled end-of-life dataset + check_eol() (§16.2)
+  providers/                   # Next-gen typed providers (implemented; not yet wired into OSSScorer)
     __init__.py                # ProviderBase ABC, ProviderResponse, ProviderStatus, NullProvider
-    github_provider.py
-    nvd_provider.py
-    osv_provider.py
-    epss_provider.py
-    scorecard_provider.py
-    registry_provider.py
+    github_provider.py         # GitHubProvider
+    nvd_provider.py            # NVDProvider
+    osv_provider.py            # OSVProvider
+    epss_provider.py           # EPSSProvider
+    scorecard_provider.py      # ScorecardProvider
+    registry_provider.py       # RegistryProvider (pypi/npm/maven)
+    endoflife_provider.py      # EndOfLifeDateProvider (endoflife.date API)
   advisory_dedup.py            # Advisory deduplication helpers
   artifact_inventory.py        # (stub) Artifact inventory
   dep_confusion.py             # (stub) Dependency-confusion detection
@@ -50,11 +54,15 @@ src/osspolicyguard/
 tests/
   test_oss_scorer.py           # 163+ unit tests for OSSScorer / OSSWorkflow internals
   test_round3_fixes.py         # 35 regression tests for rounds 3-5 PR fixes
-  test_cli.py                  # 12 CLI integration tests (scan_package, main, exit codes)
+  test_cli.py                  # CLI integration tests (scan_package, manifest, main, exit codes)
   test_reports.py              # Report formatter tests
-  test_providers.py            # Next-gen provider stub tests
+  test_providers.py            # Legacy oss_scorer.py GitHubProvider/ScorecardProvider tests
+  test_next_gen_providers.py   # src/osspolicyguard/providers/ typed provider tests
   test_new_modules.py          # Stub module tests
   test_action_script.py        # GitHub Action script tests
+  test_license_compliance.py   # license_compliance.py unit tests
+  test_dependency_pinning.py   # dependency_pinning.py unit tests
+  test_eol.py                  # eol.py unit tests
   golden/small_result.json     # Golden fixture for report tests
 
 scripts/
@@ -237,11 +245,16 @@ result under `result["compliance"]["geo_jurisdiction"]` with `affects_technical_
 ## Running tests
 
 ```bash
-python -m pytest tests/ -q          # 255 tests, all must pass
+python -m pytest tests/ -q          # 382 tests, all must pass
 python -m pytest tests/test_cli.py  # CLI tests only
 python -m pytest tests/test_round3_fixes.py  # Provider-safety regression suite
+
+ruff check .                        # lint (rules pinned in pyproject.toml: E4,E7,E9,F)
+black --check .                     # format check
+mypy src/osspolicyguard oss_scorer.py  # type check
 ```
 
+CI (`.github/workflows/tests.yml`) runs all four gates on every push/PR to `main`.
 No network calls are made in tests — all providers are mocked via `unittest.mock` or
 `monkeypatch`.
 
