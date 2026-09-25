@@ -184,10 +184,14 @@ class TestEvaluateLicense:
     def test_and_expression_uses_most_restrictive_result(self):
         finding = evaluate_license("combined-lib", "MIT AND GPL-3.0-only", "permissive")
         assert finding.verdict == "PROHIBITED"
+        assert finding.category == "strong-copyleft"
+        assert finding.copyleft == "strong"
 
     def test_or_expression_can_select_compatible_branch(self):
         finding = evaluate_license("dual-lib", "GPL-3.0-only OR MIT", "permissive")
         assert finding.verdict == "PASS"
+        assert finding.category == "permissive"
+        assert finding.copyleft == "none"
 
     def test_empty_allow_list_does_not_fail_open(self):
         policy = {"permissive": {"allow": [], "review": [], "deny": []}}

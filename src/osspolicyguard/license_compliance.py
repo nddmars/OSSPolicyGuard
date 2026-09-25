@@ -244,13 +244,18 @@ def _license_outcome(
     expression: Any,
     project_rules: dict[str, list[str]],
     project_license_category: str,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str]:
     """Evaluate a parsed SPDX AST while preserving boolean semantics."""
     if isinstance(expression, LicenseWithExceptionSymbol):
-        verdict, category, reason = _license_outcome(
+        verdict, category, copyleft, reason = _license_outcome(
             expression.license_symbol, project_rules, project_license_category
         )
-        return verdict, category, f"{reason}; exception {expression.exception_symbol.key!r} applies"
+        return (
+            verdict,
+            category,
+            copyleft,
+            f"{reason}; exception {expression.exception_symbol.key!r} applies",
+        )
 
     if isinstance(expression, LicenseSymbol):
         category = categorize_license(expression.key, False)
@@ -258,23 +263,27 @@ def _license_outcome(
             return (
                 "PROHIBITED",
                 category,
+                classify_copyleft(expression.key),
                 f"{category} license is denied under the {project_license_category!r} project policy",
             )
         if category in project_rules["review"]:
             return (
                 "REVIEW",
                 category,
+                classify_copyleft(expression.key),
                 f"{category} license requires manual review under the {project_license_category!r} project policy",
             )
         if category in project_rules["allow"]:
             return (
                 "PASS",
                 category,
+                classify_copyleft(expression.key),
                 f"{category} license is allowed under the {project_license_category!r} project policy",
             )
         return (
             "REVIEW",
             category,
+            classify_copyleft(expression.key),
             f"{category} license is not explicitly allowed under the {project_license_category!r} project policy",
         )
 
@@ -285,9 +294,16 @@ def _license_outcome(
     ranks = {"PASS": 0, "REVIEW": 1, "PROHIBITED": 2}
     if expression.__class__.__name__ == "AND":
         selected = max(outcomes, key=lambda outcome: ranks[outcome[0]])
-        return selected[0], selected[1], f"AND expression: {selected[2]}"
+        copyleft_ranks = {"none": 0, "weak": 1, "strong": 2}
+        aggregate_copyleft = max(outcomes, key=lambda outcome: copyleft_ranks[outcome[2]])[2]
+        return selected[0], selected[1], aggregate_copyleft, f"AND expression: {selected[3]}"
     selected = min(outcomes, key=lambda outcome: ranks[outcome[0]])
-    return selected[0], selected[1], f"OR expression selected a compatible branch: {selected[2]}"
+    return (
+        selected[0],
+        selected[1],
+        selected[2],
+        f"OR expression selected a compatible branch: {selected[3]}",
+    )
 
 
 @dataclass
@@ -350,14 +366,14 @@ def evaluate_license(
         if single:
             spdx_ids = [single]
             category = categorize_license(single, False)
-            verdict, category, reason = _license_outcome(
+            verdict, category, copyleft, reason = _license_outcome(
                 _SPDX_LICENSING.parse(single, validate=True),
                 project_rules,
                 project_license_category,
             )
     else:
         spdx_ids = _expression_ids(parsed)
-        verdict, category, reason = _license_outcome(
+        verdict, category, copyleft, reason = _license_outcome(
             parsed, project_rules, project_license_category
         )
 
@@ -366,14 +382,12 @@ def evaluate_license(
         category = "commercial-restricted"
         reason = f"Detected commercial/dual-license restriction ({commercial_marker!r})"
 
-    primary = spdx_ids[0] if spdx_ids else None
-
     return LicenseFinding(
         package_name=package_name,
         raw_license=raw_license,
         spdx_ids=spdx_ids,
         category=category,
-        copyleft=classify_copyleft(primary),
+        copyleft=copyleft if parsed is not None or spdx_ids else "none",
         commercial_restriction=commercial_marker,
         verdict=verdict,
         reason=reason,

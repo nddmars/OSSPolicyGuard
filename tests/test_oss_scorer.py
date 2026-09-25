@@ -1280,7 +1280,8 @@ class TestCheckOsv:
         _make_scorer().check_osv("requests", "pypi", "2.31.0")
 
         assert mock_post.call_args.kwargs["json"] == {
-            "package": {"name": "requests", "ecosystem": "PyPI", "version": "2.31.0"}
+            "package": {"name": "requests", "ecosystem": "PyPI"},
+            "version": "2.31.0",
         }
 
     @patch("oss_scorer.requests.post")

@@ -1,37 +1,18 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+from osspolicyguard.cli import parse_manifest_dependencies
 
-def parse_manifest_dependencies(manifest_path: str) -> list[dict[str, str | None]]:
-    path = Path(manifest_path)
-    if path.suffix == ".json":
-        data = json.loads(path.read_text(encoding="utf-8"))
-        deps = []
-        for section in ("dependencies", "devDependencies"):
-            for name, specifier in data.get(section, {}).items():
-                deps.append({"name": name, "specifier": str(specifier), "version": None})
-        return sorted(deps, key=lambda dependency: str(dependency["name"]))
 
-    deps: list[dict[str, str | None]] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.split("#", 1)[0].strip()
-        if not line:
-            continue
-        match = re.match(r"^([A-Za-z0-9_.-]+)", line)
-        if match:
-            name = match.group(1)
-            specifier = line[len(name) :].strip() or None
-            version = None
-            if specifier and re.fullmatch(r"\s*(?:==|=)?\s*(\d+(?:\.\d+){1,3})\s*", specifier):
-                version = re.fullmatch(r"\s*(?:==|=)?\s*(\d+(?:\.\d+){1,3})\s*", specifier).group(1)
-            deps.append({"name": name, "specifier": specifier, "version": version})
-    return deps
+class ScanError(RuntimeError):
+    def __init__(self, returncode: int, message: str) -> None:
+        super().__init__(message)
+        self.returncode = returncode
 
 
 def run_scan(package_name: str, ecosystem: str, version: str | None = None) -> dict[str, Any]:
@@ -55,7 +36,11 @@ def run_scan(package_name: str, ecosystem: str, version: str | None = None) -> d
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout)
+        output = result.stderr or result.stdout
+        message = next(
+            (line for line in reversed(output.splitlines()) if line.strip()), "scan failed"
+        )
+        raise ScanError(result.returncode, message)
     return json.loads(result.stdout)
 
 
@@ -69,9 +54,53 @@ def main() -> int:
         raise SystemExit("No supported manifest found")
 
     deps = parse_manifest_dependencies(str(manifest_path))
+    reports: list[dict[str, Any]] = []
+    exit_codes: list[int] = []
     for dependency in deps:
-        report = run_scan(dependency["name"], ecosystem, dependency["version"])
-        print(json.dumps(report, indent=2))
+        package = {
+            "name": dependency["name"],
+            "ecosystem": ecosystem,
+            "version": dependency["version"],
+        }
+        try:
+            report = run_scan(dependency["name"], ecosystem, dependency["version"])
+        except ScanError as exc:
+            exit_codes.append(exc.returncode)
+            report = {
+                "package": package,
+                "decision": "REVIEW",
+                "insufficient_data": True,
+                "provider_statuses": {"scan": "error"},
+                "warnings": [str(exc)],
+            }
+        except Exception as exc:
+            exit_codes.append(99)
+            report = {
+                "package": package,
+                "decision": "REVIEW",
+                "insufficient_data": True,
+                "provider_statuses": {"scan": "error"},
+                "warnings": [f"Unexpected scan error: {exc}"],
+            }
+        reports.append(report)
+
+        if report.get("decision") == "PROHIBITED":
+            exit_codes.append(1)
+        elif report.get("insufficient_data"):
+            exit_codes.append(4)
+
+    print(json.dumps({"dependencies": reports}, indent=2))
+
+    if 1 in exit_codes:
+        return 1
+    if 4 in exit_codes:
+        return 4
+    if 2 in exit_codes:
+        return 2
+    if 3 in exit_codes:
+        return 3
+    if 99 in exit_codes:
+        return 99
 
     return 0
 

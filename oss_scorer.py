@@ -813,14 +813,27 @@ class OSSScorer:
         timeout: int,
         params: dict | None = None,
     ) -> requests.Response:
-        """Perform a GET request, sleeping to honour the configured rate limit."""
+        """Perform a bounded, rate-limited GET with transient-error backoff."""
         rate_limit = self.config.get("nvd", {}).get("rate_limit", 5)
-        min_interval = 1.0 / rate_limit
-        elapsed = time.monotonic() - self._last_request_time
-        if elapsed < min_interval:
-            time.sleep(min_interval - elapsed)
-        self._last_request_time = time.monotonic()
-        return requests.get(url, headers=headers, timeout=timeout, params=params)
+        retries = int(self.config.get("nvd", {}).get("retries", 2))
+        backoff_factor = float(self.config.get("nvd", {}).get("backoff_factor", 0.5))
+        for attempt in range(retries + 1):
+            min_interval = 1.0 / max(rate_limit, 1)
+            elapsed = time.monotonic() - self._last_request_time
+            if elapsed < min_interval:
+                time.sleep(min_interval - elapsed)
+            self._last_request_time = time.monotonic()
+            try:
+                response = requests.get(url, headers=headers, timeout=timeout, params=params)
+            except requests.RequestException:
+                if attempt == retries:
+                    raise
+                time.sleep(backoff_factor * (2**attempt))
+                continue
+            if response.status_code not in {429, 500, 502, 503, 504} or attempt == retries:
+                return response
+            time.sleep(backoff_factor * (2**attempt))
+        raise AssertionError("unreachable: retry loop always returns or raises")  # pragma: no cover
 
     def get_github_metrics(self, repo_url: str) -> dict | None:
         """Fetch live GitHub metrics using the provider contract."""
@@ -1055,12 +1068,13 @@ class OSSScorer:
 
         timeout = self.config.get("osv", {}).get("timeout", 10)
         try:
-            package_query = {"name": package_name, "ecosystem": osv_ecosystem}
+            package_query: dict[str, Any] = {"name": package_name, "ecosystem": osv_ecosystem}
+            query: dict[str, Any] = {"package": package_query}
             if version:
-                package_query["version"] = version
+                query["version"] = version
             resp = requests.post(
                 "https://api.osv.dev/v1/query",
-                json={"package": package_query},
+                json=query,
                 timeout=timeout,
             )
             if resp.status_code != 200:
@@ -1202,10 +1216,30 @@ class OSSScorer:
                 "error": str(e),
             }
 
+    def _registry_get(
+        self, registry: str, url: str, timeout: int, **kwargs: Any
+    ) -> requests.Response:
+        """Perform a registry GET with bounded retries for transient responses."""
+        registry_config = self.config.get("registries", {}).get(registry, {})
+        retries = int(registry_config.get("retries", 2))
+        backoff_factor = float(registry_config.get("backoff_factor", 0.5))
+        for attempt in range(retries + 1):
+            try:
+                response = requests.get(url, timeout=timeout, **kwargs)
+            except requests.RequestException:
+                if attempt == retries:
+                    raise
+                time.sleep(backoff_factor * (2**attempt))
+                continue
+            if response.status_code not in {429, 500, 502, 503, 504} or attempt == retries:
+                return response
+            time.sleep(backoff_factor * (2**attempt))
+        raise AssertionError("unreachable: retry loop always returns or raises")  # pragma: no cover
+
     def _fetch_npm(self, package: str, timeout: int) -> dict:
         """Weekly downloads from the npm registry API."""
-        resp = requests.get(
-            f"https://api.npmjs.org/downloads/point/last-week/{package}", timeout=timeout
+        resp = self._registry_get(
+            "npm", f"https://api.npmjs.org/downloads/point/last-week/{package}", timeout=timeout
         )
         resp.raise_for_status()
         return {
@@ -1216,8 +1250,8 @@ class OSSScorer:
 
     def _fetch_pypi(self, package: str, timeout: int) -> dict:
         """Weekly downloads from the PyPI stats API."""
-        resp = requests.get(
-            f"https://pypistats.org/api/packages/{package.lower()}/recent", timeout=timeout
+        resp = self._registry_get(
+            "pypi", f"https://pypistats.org/api/packages/{package.lower()}/recent", timeout=timeout
         )
         resp.raise_for_status()
         return {
@@ -1228,7 +1262,9 @@ class OSSScorer:
 
     def _fetch_rubygems(self, package: str, timeout: int) -> dict:
         """Estimated weekly downloads from RubyGems (version total ÷ 52)."""
-        resp = requests.get(f"https://rubygems.org/api/v1/gems/{package}.json", timeout=timeout)
+        resp = self._registry_get(
+            "rubygems", f"https://rubygems.org/api/v1/gems/{package}.json", timeout=timeout
+        )
         resp.raise_for_status()
         version_total = int(resp.json().get("version_downloads", 0))
         return {
@@ -1239,7 +1275,8 @@ class OSSScorer:
 
     def _fetch_crates(self, package: str, timeout: int) -> dict:
         """Estimated weekly downloads from crates.io (90-day count ÷ 13)."""
-        resp = requests.get(
+        resp = self._registry_get(
+            "crates",
             f"https://crates.io/api/v1/crates/{package}",
             headers={
                 "User-Agent": self.config.get("geocoding", {}).get(
@@ -1259,7 +1296,8 @@ class OSSScorer:
     def _fetch_nuget(self, package: str, timeout: int) -> dict:
         """Estimated weekly downloads from NuGet (total ÷ 104-week lifetime)."""
         nuget_params: dict[str, Any] = {"q": f"packageid:{package}", "take": 1}
-        resp = requests.get(
+        resp = self._registry_get(
+            "nuget",
             "https://azuresearch-usnc.nuget.org/query",
             params=nuget_params,
             timeout=timeout,
@@ -1281,7 +1319,9 @@ class OSSScorer:
         if "/" not in package:
             logger.warning("Packagist requires vendor/package format, got %r — skipping", package)
             return {"weekly_downloads": 0, "period": "unknown", "registry": "packagist"}
-        resp = requests.get(f"https://packagist.org/packages/{package}.json", timeout=timeout)
+        resp = self._registry_get(
+            "packagist", f"https://packagist.org/packages/{package}.json", timeout=timeout
+        )
         resp.raise_for_status()
         monthly = int(resp.json().get("package", {}).get("downloads", {}).get("monthly", 0) or 0)
         return {
