@@ -872,57 +872,81 @@ class OSSScorer:
         }
 
         try:
-            since = (datetime.now(timezone.utc) - timedelta(days=_CVE_LOOKBACK_DAYS)).strftime(
-                "%Y-%m-%dT00:00:00.000"
-            )
-            params = {
-                "keywordSearch": package_name,
-                "resultsPerPage": 50,
-                "pubStartDate": since,
-            }
-            response = self._rate_limited_get(
-                "https://services.nvd.nist.gov/rest/json/cves/2.0",
-                headers=self._build_headers("nvd"),
-                timeout=self.config["github"]["timeout"],
-                params=params,
-            )
+            now = datetime.now(timezone.utc)
+            lookback_days = int(self.config.get("nvd", {}).get("lookback_days", _CVE_LOOKBACK_DAYS))
+            lookback_start = now - timedelta(days=lookback_days)
+            window_start = lookback_start
+            cves_by_id: dict[str, dict] = {}
+            nvd_timeout = self.config.get("nvd", {}).get("timeout", 10)
 
-            if response.status_code != 200:
-                logger.warning("NVD API returned %s for %s", response.status_code, package_name)
-                _empty["error"] = f"HTTP {response.status_code}"
-                return _empty
-
-            parsed = []
-            for item in response.json().get("vulnerabilities", []):
-                cve_obj = item.get("cve", {})
-                cve_id = cve_obj.get("id", "")
-                metrics = cve_obj.get("metrics", {})
-
-                # Prefer CVSSv3.1 → v3.0 → v2 for severity
-                severity = "UNKNOWN"
-                base_score = 0.0
-                for key in ("cvssMetricV31", "cvssMetricV30"):
-                    bucket = metrics.get(key, [])
-                    if bucket:
-                        cvss = bucket[0].get("cvssData", {})
-                        severity = cvss.get("baseSeverity", "UNKNOWN").upper()
-                        base_score = float(cvss.get("baseScore", 0))
-                        break
-                else:
-                    bucket = metrics.get("cvssMetricV2", [])
-                    if bucket:
-                        severity = bucket[0].get("baseSeverity", "UNKNOWN").upper()
-                        base_score = float(bucket[0].get("cvssData", {}).get("baseScore", 0))
-
-                parsed.append(
-                    {
-                        "id": cve_id,
-                        "severity": severity,
-                        "base_score": base_score,
-                        "epss": 0.0,
-                        "epss_percentile": 0.0,
+            while window_start < now:
+                window_end = min(window_start + timedelta(days=119), now)
+                start_index = 0
+                while True:
+                    params = {
+                        "keywordSearch": package_name,
+                        "resultsPerPage": 50,
+                        "startIndex": start_index,
+                        "pubStartDate": window_start.strftime("%Y-%m-%dT00:00:00.000"),
+                        "pubEndDate": window_end.strftime("%Y-%m-%dT23:59:59.999"),
                     }
-                )
+                    response = self._rate_limited_get(
+                        "https://services.nvd.nist.gov/rest/json/cves/2.0",
+                        headers=self._build_headers("nvd"),
+                        timeout=nvd_timeout,
+                        params=params,
+                    )
+
+                    if response.status_code != 200:
+                        logger.warning(
+                            "NVD API returned %s for %s", response.status_code, package_name
+                        )
+                        _empty["error"] = f"HTTP {response.status_code}"
+                        return _empty
+
+                    payload = response.json()
+                    vulnerabilities = payload.get("vulnerabilities", [])
+                    for item in vulnerabilities:
+                        cve_obj = item.get("cve", {})
+                        cve_id = cve_obj.get("id", "")
+                        if not cve_id or cve_id in cves_by_id:
+                            continue
+                        metrics = cve_obj.get("metrics", {})
+
+                        # Prefer CVSSv3.1 -> v3.0 -> v2 for severity.
+                        severity = "UNKNOWN"
+                        base_score = 0.0
+                        for key in ("cvssMetricV31", "cvssMetricV30"):
+                            bucket = metrics.get(key, [])
+                            if bucket:
+                                cvss = bucket[0].get("cvssData", {})
+                                severity = cvss.get("baseSeverity", "UNKNOWN").upper()
+                                base_score = float(cvss.get("baseScore", 0))
+                                break
+                        else:
+                            bucket = metrics.get("cvssMetricV2", [])
+                            if bucket:
+                                severity = bucket[0].get("baseSeverity", "UNKNOWN").upper()
+                                base_score = float(
+                                    bucket[0].get("cvssData", {}).get("baseScore", 0)
+                                )
+
+                        cves_by_id[cve_id] = {
+                            "id": cve_id,
+                            "severity": severity,
+                            "base_score": base_score,
+                            "epss": 0.0,
+                            "epss_percentile": 0.0,
+                        }
+
+                    total_results = int(payload.get("totalResults", len(vulnerabilities)))
+                    start_index += len(vulnerabilities)
+                    if not vulnerabilities or start_index >= total_results:
+                        break
+
+                window_start = window_end + timedelta(milliseconds=1)
+
+            parsed = list(cves_by_id.values())
 
         except requests.RequestException as e:
             logger.error("NVD API error for %s: %s", package_name, str(e))

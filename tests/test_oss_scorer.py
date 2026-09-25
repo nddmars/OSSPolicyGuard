@@ -33,7 +33,11 @@ _REGISTRY_CFG = {
 }
 
 MINIMAL_CONFIG = {
-    "nvd": {"api_key": "", "rate_limit": 100},  # high rate limit so tests don't sleep
+    "nvd": {
+        "api_key": "",
+        "rate_limit": 100,
+        "lookback_days": 1,
+    },  # high rate limit so tests don't sleep
     "github": {"token": "", "timeout": 5},
     "scoring": {
         "weights": {"activity": 30, "trust": 20, "security": 35, "community": 15},
@@ -347,6 +351,36 @@ class TestCheckCves:
         assert result["critical"] == 1
         assert result["high"] == 1
         assert result["medium"] == 1
+
+    @patch("oss_scorer.requests.get")
+    def test_paginates_and_deduplicates_cves(self, mock_get):
+        first_page = MagicMock(status_code=200)
+        first_page.json.return_value = {
+            **_nvd_v2_response(("CVE-2021-0001", "HIGH", 7.5)),
+            "totalResults": 2,
+        }
+        second_page = MagicMock(status_code=200)
+        second_page.json.return_value = {
+            **_nvd_v2_response(
+                ("CVE-2021-0001", "HIGH", 7.5),
+                ("CVE-2021-0002", "MEDIUM", 5.0),
+            ),
+            "totalResults": 2,
+        }
+        epss_resp = MagicMock(status_code=200)
+        epss_resp.json.return_value = _epss_response()
+        mock_get.side_effect = [first_page, second_page, epss_resp]
+
+        result = _make_scorer().check_cves("some-lib")
+
+        assert result["total"] == 2
+        nvd_calls = mock_get.call_args_list[:2]
+        assert nvd_calls[0].kwargs["params"]["startIndex"] == 0
+        assert nvd_calls[1].kwargs["params"]["startIndex"] == 1
+        for call in nvd_calls:
+            params = call.kwargs["params"]
+            assert params["pubStartDate"] < params["pubEndDate"]
+            assert params["pubStartDate"][:10] <= params["pubEndDate"][:10]
 
     @patch("oss_scorer.requests.get")
     def test_epss_scores_attached_to_cves(self, mock_get):

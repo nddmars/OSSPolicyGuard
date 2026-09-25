@@ -15,7 +15,9 @@ class ScanError(RuntimeError):
         self.returncode = returncode
 
 
-def run_scan(package_name: str, ecosystem: str, version: str | None = None) -> dict[str, Any]:
+def run_scan(
+    package_name: str, ecosystem: str, version: str | None = None
+) -> tuple[dict[str, Any], int]:
     command = [
         sys.executable,
         "-m",
@@ -35,13 +37,21 @@ def run_scan(package_name: str, ecosystem: str, version: str | None = None) -> d
         text=True,
         check=False,
     )
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        report = None
+
+    if report is not None:
+        return report, result.returncode
+
     if result.returncode != 0:
         output = result.stderr or result.stdout
         message = next(
             (line for line in reversed(output.splitlines()) if line.strip()), "scan failed"
         )
         raise ScanError(result.returncode, message)
-    return json.loads(result.stdout)
+    raise ScanError(99, "scan returned invalid JSON")
 
 
 def main() -> int:
@@ -63,14 +73,21 @@ def main() -> int:
             "version": dependency["version"],
         }
         try:
-            report = run_scan(dependency["name"], ecosystem, dependency["version"])
+            report, scan_exit_code = run_scan(dependency["name"], ecosystem, dependency["version"])
+            if scan_exit_code:
+                exit_codes.append(scan_exit_code if scan_exit_code in {1, 2, 3, 4, 99} else 99)
         except ScanError as exc:
-            exit_codes.append(exc.returncode)
+            scan_exit_code = exc.returncode if exc.returncode in {1, 2, 3, 4, 99} else 99
+            exit_codes.append(scan_exit_code)
+            provider_status = {
+                3: "configuration_error",
+                99: "internal_error",
+            }.get(scan_exit_code, "error")
             report = {
                 "package": package,
-                "decision": "REVIEW",
-                "insufficient_data": True,
-                "provider_statuses": {"scan": "error"},
+                "decision": "PROHIBITED" if scan_exit_code == 1 else "REVIEW",
+                "insufficient_data": scan_exit_code == 4,
+                "provider_statuses": {"scan": provider_status},
                 "warnings": [str(exc)],
             }
         except Exception as exc:
@@ -78,8 +95,8 @@ def main() -> int:
             report = {
                 "package": package,
                 "decision": "REVIEW",
-                "insufficient_data": True,
-                "provider_statuses": {"scan": "error"},
+                "insufficient_data": False,
+                "provider_statuses": {"scan": "internal_error"},
                 "warnings": [f"Unexpected scan error: {exc}"],
             }
         reports.append(report)

@@ -73,3 +73,29 @@ def test_main_aggregates_scan_failures(tmp_path, monkeypatch, capsys):
     failure = next(item for item in report["dependencies"] if item["package"]["name"] == "flask")
     assert failure["provider_statuses"] == {"scan": "error"}
     assert failure["warnings"] == ["OSV unavailable"]
+
+
+def test_run_scan_preserves_json_for_nonzero_exit(monkeypatch):
+    completed = type(
+        "CompletedProcess",
+        (),
+        {"returncode": 4, "stdout": '{"decision": "REVIEW"}', "stderr": ""},
+    )()
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: completed)
+
+    assert module.run_scan("requests", "pypi") == ({"decision": "REVIEW"}, 4)
+
+
+def test_main_preserves_configuration_exit_code(tmp_path, monkeypatch, capsys):
+    (tmp_path / "requirements.txt").write_text("requests\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        module,
+        "run_scan",
+        lambda *args: (_ for _ in ()).throw(module.ScanError(3, "bad configuration")),
+    )
+
+    assert module.main() == 3
+    report = json.loads(capsys.readouterr().out)["dependencies"][0]
+    assert report["insufficient_data"] is False
+    assert report["provider_statuses"] == {"scan": "configuration_error"}

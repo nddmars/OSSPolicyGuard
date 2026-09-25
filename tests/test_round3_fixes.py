@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 # ---------------------------------------------------------------------------
 
 MINIMAL_CONFIG = {
-    "nvd": {"api_key": "", "rate_limit": 1000},
+    "nvd": {"api_key": "", "rate_limit": 1000, "lookback_days": 1},
     "github": {"token": "", "timeout": 5},
     "scoring": {
         "weights": {"activity": 30, "trust": 20, "security": 35, "community": 15},
@@ -250,11 +250,11 @@ def test_calculate_security_score_scorecard_missing_score():
 
 
 # ---------------------------------------------------------------------------
-# Finding 4 – NVD uses a single rate-limited call with params
+# Finding 4 – NVD uses bounded windows with complete date parameters
 # ---------------------------------------------------------------------------
 
 
-def test_check_cves_single_request(monkeypatch):
+def test_check_cves_uses_bounded_date_window_and_nvd_timeout(monkeypatch):
     scorer = _make_scorer()
 
     calls = []
@@ -275,10 +275,11 @@ def test_check_cves_single_request(monkeypatch):
     monkeypatch.setattr(scorer, "get_epss_scores", lambda ids: {})
 
     scorer.check_cves("express")
-    # Only one rate-limited call should have been made
+    # The one-day test lookback fits in a single NVD window.
     assert len(calls) == 1
-    # The params dict must be present (not None)
-    assert calls[0] is not None
+    assert calls[0]["pubStartDate"] < calls[0]["pubEndDate"]
+    assert "pubStartDate" in calls[0]
+    assert "pubEndDate" in calls[0]
 
 
 # ---------------------------------------------------------------------------
